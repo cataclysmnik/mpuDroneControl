@@ -531,7 +531,7 @@ class MainWindow(QMainWindow):
         self.roll_stick = 0.0  # -1 to 1
         
         # Vertical motion tracking for gesture throttle
-        self.throttle_gesture = 0.0  # Accumulated throttle from gestures
+        self.throttle_gesture = 0.0  # Start at bottom
         self.last_az_normalized = 0.0  # Last vertical acceleration
         
         # IMU orientation for stabilization
@@ -636,7 +636,8 @@ class MainWindow(QMainWindow):
         viz_layout = QVBoxLayout()
         
         self.gl_widget = OpenGLWidget()
-        self.gl_widget.setMinimumHeight(400)
+        self.gl_widget.setMinimumHeight(300)
+        self.gl_widget.setMaximumHeight(350)
         viz_layout.addWidget(self.gl_widget)
         
         viz_group.setLayout(viz_layout)
@@ -663,28 +664,103 @@ class MainWindow(QMainWindow):
         self.max_angle_combo.addItems(["15°", "30°", "45°", "60°"])
         self.max_angle_combo.setCurrentIndex(1)  # Default to 30°
         mode_layout.addWidget(self.max_angle_combo)
-        
-        # Invert controls
-        from PySide6.QtWidgets import QCheckBox
-        self.invert_roll_check = QCheckBox("Invert Roll")
-        self.invert_roll_check.setChecked(False)
-        mode_layout.addWidget(self.invert_roll_check)
-        
-        self.invert_pitch_check = QCheckBox("Invert Pitch")
-        self.invert_pitch_check.setChecked(True)  # Inverted by default
-        mode_layout.addWidget(self.invert_pitch_check)
-        
-        self.gesture_throttle_check = QCheckBox("Gesture Throttle")
-        self.gesture_throttle_check.setChecked(True)  # Enabled by default
-        self.gesture_throttle_check.setToolTip("Control throttle by moving sensor up/down (vertical motion)")
-        mode_layout.addWidget(self.gesture_throttle_check)
-        
         mode_layout.addStretch()
         
         joystick_layout.addLayout(mode_layout)
         
-        # Joystick widgets
-        sticks_layout = QHBoxLayout()
+        # Deadzone controls in separate row
+        deadzone_layout = QHBoxLayout()
+        deadzone_layout.setSpacing(15)  # Add spacing between control groups
+        
+        deadzone_layout.addWidget(QLabel("Roll Deadzone:"))
+        from PySide6.QtWidgets import QSlider
+        self.roll_deadzone_slider = QSlider(Qt.Horizontal)
+        self.roll_deadzone_slider.setMinimum(0)
+        self.roll_deadzone_slider.setMaximum(30)  # 0-30 degrees
+        self.roll_deadzone_slider.setValue(3)  # Default 3°
+        self.roll_deadzone_slider.setMinimumWidth(120)
+        self.roll_deadzone_slider.setMaximumWidth(150)
+        self.roll_deadzone_slider.setToolTip("Angle below which roll is ignored")
+        deadzone_layout.addWidget(self.roll_deadzone_slider)
+        
+        self.roll_deadzone_label = QLabel("3°")
+        self.roll_deadzone_label.setMinimumWidth(35)
+        self.roll_deadzone_slider.valueChanged.connect(lambda v: self.roll_deadzone_label.setText(f"{v}°"))
+        deadzone_layout.addWidget(self.roll_deadzone_label)
+        
+        deadzone_layout.addSpacing(20)  # Extra space between groups
+        
+        deadzone_layout.addWidget(QLabel("Pitch Deadzone:"))
+        self.pitch_deadzone_slider = QSlider(Qt.Horizontal)
+        self.pitch_deadzone_slider.setMinimum(0)
+        self.pitch_deadzone_slider.setMaximum(30)  # 0-30 degrees
+        self.pitch_deadzone_slider.setValue(3)  # Default 3°
+        self.pitch_deadzone_slider.setMinimumWidth(120)
+        self.pitch_deadzone_slider.setMaximumWidth(150)
+        self.pitch_deadzone_slider.setToolTip("Angle below which pitch is ignored")
+        deadzone_layout.addWidget(self.pitch_deadzone_slider)
+        
+        self.pitch_deadzone_label = QLabel("3°")
+        self.pitch_deadzone_label.setMinimumWidth(35)
+        self.pitch_deadzone_slider.valueChanged.connect(lambda v: self.pitch_deadzone_label.setText(f"{v}°"))
+        deadzone_layout.addWidget(self.pitch_deadzone_label)
+        
+        deadzone_layout.addSpacing(20)  # Extra space between groups
+        
+        deadzone_layout.addWidget(QLabel("Throttle Sens:"))
+        self.throttle_sensitivity_slider = QSlider(Qt.Horizontal)
+        self.throttle_sensitivity_slider.setMinimum(1)
+        self.throttle_sensitivity_slider.setMaximum(20)  # 1-20x sensitivity
+        self.throttle_sensitivity_slider.setValue(5)  # Default 5x
+        self.throttle_sensitivity_slider.setMinimumWidth(120)
+        self.throttle_sensitivity_slider.setMaximumWidth(150)
+        self.throttle_sensitivity_slider.setToolTip("How quickly throttle responds to rotation")
+        deadzone_layout.addWidget(self.throttle_sensitivity_slider)
+        
+        self.throttle_sensitivity_label = QLabel("5x")
+        self.throttle_sensitivity_label.setMinimumWidth(35)
+        self.throttle_sensitivity_slider.valueChanged.connect(lambda v: self.throttle_sensitivity_label.setText(f"{v}x"))
+        deadzone_layout.addWidget(self.throttle_sensitivity_label)
+        
+        deadzone_layout.addSpacing(20)  # Extra space between groups
+        
+        deadzone_layout.addWidget(QLabel("Yaw Deadzone:"))
+        self.yaw_deadzone_slider = QSlider(Qt.Horizontal)
+        self.yaw_deadzone_slider.setMinimum(0)
+        self.yaw_deadzone_slider.setMaximum(50)  # 0-50 deg/s
+        self.yaw_deadzone_slider.setValue(5)  # Default 5 deg/s
+        self.yaw_deadzone_slider.setMinimumWidth(120)
+        self.yaw_deadzone_slider.setMaximumWidth(150)
+        self.yaw_deadzone_slider.setToolTip("Ignore small yaw rotation rates (gz) for throttle")
+        deadzone_layout.addWidget(self.yaw_deadzone_slider)
+        
+        self.yaw_deadzone_label = QLabel("5°/s")
+        self.yaw_deadzone_label.setMinimumWidth(40)
+        self.yaw_deadzone_slider.valueChanged.connect(lambda v: self.yaw_deadzone_label.setText(f"{v}°/s"))
+        deadzone_layout.addWidget(self.yaw_deadzone_label)
+        
+        deadzone_layout.addStretch()
+        
+        joystick_layout.addLayout(deadzone_layout)
+        
+        # Invert controls in separate row
+        invert_layout = QHBoxLayout()
+        from PySide6.QtWidgets import QCheckBox
+        self.invert_roll_check = QCheckBox("Invert Roll")
+        self.invert_roll_check.setChecked(False)
+        invert_layout.addWidget(self.invert_roll_check)
+        
+        self.invert_pitch_check = QCheckBox("Invert Pitch")
+        self.invert_pitch_check.setChecked(True)  # Inverted by default
+        invert_layout.addWidget(self.invert_pitch_check)
+        
+        self.gesture_throttle_check = QCheckBox("Gesture Throttle")
+        self.gesture_throttle_check.setChecked(True)  # Enabled by default
+        self.gesture_throttle_check.setToolTip("Control throttle by rotating sensor (gz - yaw rate)")
+        invert_layout.addWidget(self.gesture_throttle_check)
+        invert_layout.addStretch()
+        
+        joystick_layout.addLayout(invert_layout)
         
         # Joystick widgets
         sticks_layout = QHBoxLayout()
@@ -889,10 +965,32 @@ class MainWindow(QMainWindow):
             roll_multiplier = -1 if self.invert_roll_check.isChecked() else 1
             pitch_multiplier = -1 if self.invert_pitch_check.isChecked() else 1
             
+            # Get deadzone values in degrees
+            roll_deadzone = self.roll_deadzone_slider.value()
+            pitch_deadzone = self.pitch_deadzone_slider.value()
+            
+            # Apply deadzone to angles before normalization
+            roll_deg_filtered = roll_deg
+            pitch_deg_filtered = pitch_deg
+            
+            if abs(roll_deg) < roll_deadzone:
+                roll_deg_filtered = 0.0
+            else:
+                # Remove deadzone and rescale
+                sign = 1 if roll_deg > 0 else -1
+                roll_deg_filtered = sign * (abs(roll_deg) - roll_deadzone)
+            
+            if abs(pitch_deg) < pitch_deadzone:
+                pitch_deg_filtered = 0.0
+            else:
+                # Remove deadzone and rescale
+                sign = 1 if pitch_deg > 0 else -1
+                pitch_deg_filtered = sign * (abs(pitch_deg) - pitch_deadzone)
+            
             # Roll: negative roll (left tilt) = negative stick (left)
             # Pitch: positive pitch (forward tilt) = positive stick (up)
-            roll_stick_pos = roll_multiplier * (-roll_deg / max_angle)  # Base invert for intuitive control
-            pitch_stick_pos = pitch_multiplier * (pitch_deg / max_angle)
+            roll_stick_pos = roll_multiplier * (-roll_deg_filtered / max_angle)  # Base invert for intuitive control
+            pitch_stick_pos = pitch_multiplier * (pitch_deg_filtered / max_angle)
             
             # Clamp to -1 to 1
             roll_stick_pos = max(-1.0, min(1.0, roll_stick_pos))
@@ -906,64 +1004,39 @@ class MainWindow(QMainWindow):
             self.pitch_stick = pitch_stick_pos
             
             # For throttle/yaw stick control
-            # Yaw: use yaw rate from gyroscope
-            yaw_rate = gz  # deg/s from gyroscope
-            yaw_stick_pos = yaw_rate / 100.0  # Scale: 100 deg/s = full stick
-            yaw_stick_pos = max(-1.0, min(1.0, yaw_stick_pos))
+            # Yaw stick: keep at center (no yaw control)
+            yaw_stick_pos = 0.0
             
-            # Throttle control with vertical motion gesture
+            # Throttle control with gz (yaw rotation rate) gesture
             if self.gesture_throttle_check.isChecked():
-                # Calculate the vertical component of acceleration
-                # We need to account for sensor orientation to get true vertical
-                # Use the acceleration magnitude and compare to gravity
+                # Use gz (gyroscope Z-axis) to control throttle
+                # Positive gz (clockwise rotation) = increase throttle
+                # Negative gz (counter-clockwise) = decrease throttle
                 
-                # Get the normalized vertical acceleration (should be ~1g when stationary)
-                acc_magnitude = np.sqrt(ax**2 + ay**2 + az**2)
+                # Get sensitivity multiplier and yaw deadzone
+                sensitivity = self.throttle_sensitivity_slider.value()
+                yaw_deadzone = self.yaw_deadzone_slider.value()
                 
-                if acc_magnitude > 0.1:
-                    # Project acceleration onto the world vertical axis
-                    # When sensor is level, az ≈ gravity
-                    # When tilted, we need to rotate the acceleration vector
-                    
-                    # Simple approach: use the z-component adjusted for tilt
-                    # Normalize accelerometer readings
-                    ax_n = ax / acc_magnitude
-                    ay_n = ay / acc_magnitude
-                    az_n = az / acc_magnitude
-                    
-                    # Calculate rotation matrix components to get world-frame vertical
-                    # For small angles, we can approximate
-                    roll_rad = np.radians(roll_deg)
-                    pitch_rad = np.radians(pitch_deg)
-                    
-                    # Rotate acceleration vector to world frame (simplified)
-                    # Vertical component in world frame
-                    az_world = (az_n * np.cos(roll_rad) * np.cos(pitch_rad) - 
-                               ax_n * np.sin(pitch_rad) - 
-                               ay_n * np.sin(roll_rad) * np.cos(pitch_rad))
-                    
-                    # Scale by magnitude to get actual vertical acceleration
-                    vertical_accel = az_world * acc_magnitude
-                    
-                    # Detect up/down motion by comparing to gravity (9.8 m/s² or ~1g)
-                    # Positive deviation = moving up, negative = moving down
-                    gravity = 9.8  # m/s²
-                    accel_deviation = vertical_accel - gravity
-                    
-                    # Scale the deviation to throttle change
-                    # ±5 m/s² deviation = ±0.02 throttle change per update
-                    throttle_change = accel_deviation / 250.0
-                    
-                    # Update throttle with smoothing
-                    self.throttle_gesture += throttle_change
-                    
-                    # Decay towards zero slowly (auto-center)
-                    decay_rate = 0.995
-                    self.throttle_gesture *= decay_rate
-                    
-                    # Apply to actual throttle
-                    self.throttle = max(0.0, min(1.0, self.throttle_gesture))
-                    
+                # Apply deadzone to gz
+                gz_filtered = gz
+                if abs(gz) < yaw_deadzone:
+                    gz_filtered = 0.0
+                else:
+                    # Remove deadzone and rescale
+                    sign = 1 if gz > 0 else -1
+                    gz_filtered = sign * (abs(gz) - yaw_deadzone)
+                
+                # Scale rotation rate to throttle change
+                # Base: ±50 deg/s = moderate throttle change
+                throttle_change = (gz_filtered / 500.0) * sensitivity
+                
+                # Update throttle accumulator - stays where you leave it
+                self.throttle_gesture += throttle_change
+                
+                # Apply to actual throttle with clamping
+                self.throttle_gesture = max(0.0, min(1.0, self.throttle_gesture))
+                self.throttle = self.throttle_gesture
+                
                 # Convert to stick position (-1 to 1 for display, but bottom is -1)
                 throttle_pos = (self.throttle * 2.0) - 1.0  # 0 to 1 → -1 to 1
             else:
@@ -980,7 +1053,11 @@ class MainWindow(QMainWindow):
     def zero_orientation(self):
         """Zero/level the current orientation."""
         self.sensor_fusion.zero_orientation()
-        self.status_label.setText("Status: Orientation zeroed - Current position set as level reference")
+        # Reset throttle to bottom
+        self.throttle = 0.0
+        self.throttle_gesture = 0.0
+        self.yaw_stick = 0.0
+        self.status_label.setText("Status: Orientation and throttle zeroed")
     
     def on_error(self, error_msg):
         """Handle errors from serial reader."""
