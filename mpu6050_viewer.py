@@ -2,7 +2,7 @@ import sys
 import numpy as np
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                                QHBoxLayout, QComboBox, QPushButton, QLabel, 
-                               QGroupBox, QGridLayout, QTextEdit)
+                               QGroupBox, QGridLayout, QTextEdit, QRadioButton, QButtonGroup)
 from PySide6.QtCore import QTimer, Signal, QThread, Qt, QPointF
 from PySide6.QtGui import QFont, QPainter, QColor, QPen, QBrush
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -11,6 +11,7 @@ from OpenGL.GLU import *
 import serial
 import serial.tools.list_ports
 import time
+import struct
 from pymavlink import mavutil
 from pymavlink.dialects.v20 import common as mavlink2
 
@@ -95,15 +96,21 @@ class SensorFusion:
 
 
 class SerialReader(QThread):
-    """Thread for reading serial data from MPU6050."""
+    """Thread for reading serial data from MPU6050 or ESP-NOW packets."""
     
     data_received = Signal(float, float, float, float, float, float)
+    mavlink_received = Signal(dict)  # For receiver mode: receive MAVLink data
     error_occurred = Signal(str)
     
     def __init__(self):
         super().__init__()
         self.serial_port = None
         self.running = False
+        self.mode = 'transmitter'  # 'transmitter' or 'receiver'
+    
+    def set_mode(self, mode):
+        """Set operation mode: 'transmitter' or 'receiver'."""
+        self.mode = mode
         
     def connect(self, port, baudrate=115200):
         """Connect to serial port."""
@@ -160,15 +167,69 @@ class SerialReader(QThread):
                 if self.serial_port.in_waiting > 0:
                     line = self.serial_port.readline().decode('utf-8').strip()
                     
-                    # Expected format: ax,ay,az,gx,gy,gz
-                    parts = line.split(',')
-                    if len(parts) == 6:
-                        ax, ay, az, gx, gy, gz = map(float, parts)
-                        self.data_received.emit(ax, ay, az, gx, gy, gz)
+                    if self.mode == 'transmitter':
+                        # Transmitter mode: read sensor data (ax,ay,az,gx,gy,gz)
+                        parts = line.split(',')
+                        if len(parts) == 6:
+                            ax, ay, az, gx, gy, gz = map(float, parts)
+                            self.data_received.emit(ax, ay, az, gx, gy, gz)
+                    
+                    elif self.mode == 'receiver':
+                        # Receiver mode: Parse ESP-NOW packet with MAVLink data
+                        # Expected format from ESP: "ESPNOW:<hex_data>"
+                        # Or fallback CSV format: roll,pitch,throttle,yaw,ax,ay,az,gx,gy,gz
+                        if line.startswith('ESPNOW:'):
+                            hex_data = line[7:]
+                            self._parse_espnow_packet(hex_data)
+                        else:
+                            # Fallback: CSV format for testing without ESP-NOW
+                            parts = line.split(',')
+                            if len(parts) == 10:
+                                # Format: roll_stick,pitch_stick,throttle,yaw_stick,ax,ay,az,gx,gy,gz
+                                roll_stick, pitch_stick, throttle, yaw_stick, ax, ay, az, gx, gy, gz = map(float, parts)
+                                mavlink_data = {
+                                    'roll_stick': roll_stick,
+                                    'pitch_stick': pitch_stick,
+                                    'throttle': throttle,
+                                    'yaw_stick': yaw_stick,
+                                    'ax': ax, 'ay': ay, 'az': az,
+                                    'gx': gx, 'gy': gy, 'gz': gz
+                                }
+                                self.mavlink_received.emit(mavlink_data)
+                                # Also emit raw sensor data for visualization
+                                self.data_received.emit(ax, ay, az, gx, gy, gz)
                     
             except Exception as e:
                 self.error_occurred.emit(f"Read error: {str(e)}")
                 time.sleep(0.1)
+    
+    def _parse_espnow_packet(self, hex_data):
+        """Parse ESP-NOW hex packet containing MAVLink data."""
+        try:
+            # Convert hex string to bytes
+            data_bytes = bytes.fromhex(hex_data)
+            
+            # Expected packet structure (40 bytes):
+            # 4 floats for sticks (roll, pitch, throttle, yaw) = 16 bytes
+            # 6 floats for IMU (ax, ay, az, gx, gy, gz) = 24 bytes
+            if len(data_bytes) >= 40:
+                # Unpack data (little-endian floats)
+                values = struct.unpack('<10f', data_bytes[:40])
+                roll_stick, pitch_stick, throttle, yaw_stick, ax, ay, az, gx, gy, gz = values
+                
+                mavlink_data = {
+                    'roll_stick': roll_stick,
+                    'pitch_stick': pitch_stick,
+                    'throttle': throttle,
+                    'yaw_stick': yaw_stick,
+                    'ax': ax, 'ay': ay, 'az': az,
+                    'gx': gx, 'gy': gy, 'gz': gz
+                }
+                self.mavlink_received.emit(mavlink_data)
+                # Also emit raw sensor data for visualization
+                self.data_received.emit(ax, ay, az, gx, gy, gz)
+        except Exception as e:
+            self.error_occurred.emit(f"ESP-NOW parse error: {str(e)}")
 
 
 class VirtualJoystick(QWidget):
@@ -516,13 +577,14 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MPU6050 Orientation Viewer")
+        self.setWindowTitle("MPU6050 Orientation Viewer with ESP-NOW")
         self.setGeometry(100, 100, 1000, 700)
         
         # Initialize components
         self.sensor_fusion = SensorFusion()
         self.serial_reader = SerialReader()
         self.is_connected = False
+        self.operation_mode = 'transmitter'  # 'transmitter' or 'receiver'
         
         # MAVLink control values
         self.throttle = 0.0  # 0 to 1 - start at bottom
@@ -541,6 +603,7 @@ class MainWindow(QMainWindow):
         
         # Connect signals
         self.serial_reader.data_received.connect(self.on_data_received)
+        self.serial_reader.mavlink_received.connect(self.on_mavlink_received)
         self.serial_reader.error_occurred.connect(self.on_error)
         
         # Setup UI
@@ -559,6 +622,19 @@ class MainWindow(QMainWindow):
         # Control panel
         control_group = QGroupBox("Connection Settings")
         control_layout = QHBoxLayout()
+        
+        # Mode selection
+        control_layout.addWidget(QLabel("Mode:"))
+        self.mode_button_group = QButtonGroup()
+        self.transmitter_radio = QRadioButton("Transmitter")
+        self.receiver_radio = QRadioButton("Receiver")
+        self.transmitter_radio.setChecked(True)
+        self.mode_button_group.addButton(self.transmitter_radio)
+        self.mode_button_group.addButton(self.receiver_radio)
+        self.transmitter_radio.toggled.connect(self.on_mode_changed)
+        control_layout.addWidget(self.transmitter_radio)
+        control_layout.addWidget(self.receiver_radio)
+        control_layout.addSpacing(20)
         
         control_layout.addWidget(QLabel("COM Port:"))
         self.port_combo = QComboBox()
@@ -586,7 +662,7 @@ class MainWindow(QMainWindow):
         self.zero_btn.setToolTip("Set current position as level reference (place sensor flat first)")
         control_layout.addWidget(self.zero_btn)
         
-        self.status_label = QLabel("Status: Disconnected - Close Arduino IDE Serial Monitor before connecting")
+        self.status_label = QLabel("Status: Disconnected - Select mode (Transmitter sends, Receiver gets ESP-NOW data)")
         self.status_label.setWordWrap(True)
         control_layout.addWidget(self.status_label)
         control_layout.addStretch()
@@ -812,6 +888,27 @@ class MainWindow(QMainWindow):
             
         if self.port_combo.count() == 0:
             self.port_combo.addItem("No ports available", None)
+    
+    def on_mode_changed(self):
+        """Handle mode change between transmitter and receiver."""
+        if self.transmitter_radio.isChecked():
+            self.operation_mode = 'transmitter'
+            self.status_label.setText("Status: Transmitter Mode - Reads sensor and sends MAVLink commands")
+        else:
+            self.operation_mode = 'receiver'
+            self.status_label.setText("Status: Receiver Mode - Receives ESP-NOW data and displays")
+        
+        # Update serial reader mode
+        self.serial_reader.set_mode(self.operation_mode)
+        
+        # Disable mode change when connected
+        if self.is_connected:
+            self.status_label.setText("Status: Cannot change mode while connected. Disconnect first.")
+            # Revert selection
+            if self.operation_mode == 'transmitter':
+                self.receiver_radio.setChecked(True)
+            else:
+                self.transmitter_radio.setChecked(True)
             
     def toggle_connection(self):
         """Toggle connection to serial port."""
@@ -832,10 +929,13 @@ class MainWindow(QMainWindow):
                 self.serial_reader.start()
                 self.is_connected = True
                 self.connect_btn.setText("Disconnect")
-                self.status_label.setText(f"Status: Connected to {port} at {baudrate} baud")
+                mode_text = "Transmitter" if self.operation_mode == 'transmitter' else "Receiver"
+                self.status_label.setText(f"Status: Connected ({mode_text}) to {port} at {baudrate} baud")
                 self.port_combo.setEnabled(False)
                 self.baud_combo.setEnabled(False)
                 self.refresh_btn.setEnabled(False)
+                self.transmitter_radio.setEnabled(False)
+                self.receiver_radio.setEnabled(False)
                 self.zero_btn.setEnabled(True)
             else:
                 self.status_label.setText("Status: Connection failed - Check console for details")
@@ -849,6 +949,8 @@ class MainWindow(QMainWindow):
             self.port_combo.setEnabled(True)
             self.baud_combo.setEnabled(True)
             self.refresh_btn.setEnabled(True)
+            self.transmitter_radio.setEnabled(True)
+            self.receiver_radio.setEnabled(True)
             self.zero_btn.setEnabled(False)
             
     def on_control_mode_changed(self, index):
@@ -1050,6 +1152,27 @@ class MainWindow(QMainWindow):
         # Update MAVLink commands with latest IMU data
         self.update_mavlink_commands()
         
+        # In transmitter mode, send data to ESP for ESP-NOW transmission
+        if self.operation_mode == 'transmitter' and self.is_connected:
+            self.send_espnow_data(ax, ay, az, gx, gy, gz)
+        
+    def send_espnow_data(self, ax, ay, az, gx, gy, gz):
+        """Send MAVLink control data to ESP for ESP-NOW transmission."""
+        try:
+            if self.serial_reader.serial_port and self.serial_reader.serial_port.is_open:
+                # Pack data: 4 stick values + 6 IMU values = 10 floats
+                data = struct.pack('<10f', 
+                    self.roll_stick, self.pitch_stick, self.throttle, self.yaw_stick,
+                    ax, ay, az, gx, gy, gz)
+                
+                # Send as hex string with header
+                hex_data = data.hex().upper()
+                message = f"SEND:{hex_data}\n"
+                self.serial_reader.serial_port.write(message.encode('utf-8'))
+        except Exception as e:
+            # Silently fail to avoid flooding error messages
+            pass
+        
     def zero_orientation(self):
         """Zero/level the current orientation."""
         self.sensor_fusion.zero_orientation()
@@ -1058,6 +1181,24 @@ class MainWindow(QMainWindow):
         self.throttle_gesture = 0.0
         self.yaw_stick = 0.0
         self.status_label.setText("Status: Orientation and throttle zeroed")
+    
+    def on_mavlink_received(self, mavlink_data):
+        """Handle received MAVLink data from ESP-NOW (receiver mode)."""
+        # Extract control values from received data
+        self.roll_stick = mavlink_data['roll_stick']
+        self.pitch_stick = mavlink_data['pitch_stick']
+        self.throttle = mavlink_data['throttle']
+        self.yaw_stick = mavlink_data['yaw_stick']
+        
+        # Update joystick visualizations to match received data
+        throttle_pos = (self.throttle * 2.0) - 1.0  # 0-1 to -1-1
+        self.throttle_yaw_stick.set_position(self.yaw_stick, throttle_pos)
+        self.pitch_roll_stick.set_position(self.roll_stick, self.pitch_stick)
+        
+        # Update MAVLink display with received data
+        self.update_mavlink_commands()
+        
+        # Note: IMU data is already handled by on_data_received
     
     def on_error(self, error_msg):
         """Handle errors from serial reader."""
