@@ -745,29 +745,29 @@ class MainWindow(QMainWindow):
         joystick_group = QGroupBox("Flight Control Sticks")
         joystick_layout = QVBoxLayout()
         
-        # Control mode selection
-        mode_layout = QHBoxLayout()
-        mode_layout.addWidget(QLabel("Control Mode:"))
+        # Control mode selection (only for transmitter)
+        self.control_mode_layout = QHBoxLayout()
+        self.control_mode_layout.addWidget(QLabel("Control Mode:"))
         self.control_mode_combo = QComboBox()
         self.control_mode_combo.addItems(["Manual (Mouse)", "IMU Controlled"])
         self.control_mode_combo.setCurrentIndex(1)  # Default to IMU controlled
         self.control_mode_combo.currentIndexChanged.connect(self.on_control_mode_changed)
-        mode_layout.addWidget(self.control_mode_combo)
+        self.control_mode_layout.addWidget(self.control_mode_combo)
         
-        mode_layout.addWidget(QLabel("Max Angle:"))
+        self.control_mode_layout.addWidget(QLabel("Max Angle:"))
         self.max_angle_combo = QComboBox()
         self.max_angle_combo.addItems(["15°", "30°", "45°", "60°"])
         self.max_angle_combo.setCurrentIndex(1)  # Default to 30°
-        mode_layout.addWidget(self.max_angle_combo)
-        mode_layout.addStretch()
+        self.control_mode_layout.addWidget(self.max_angle_combo)
+        self.control_mode_layout.addStretch()
         
-        joystick_layout.addLayout(mode_layout)
+        joystick_layout.addLayout(self.control_mode_layout)
         
-        # Deadzone controls in separate row
-        deadzone_layout = QHBoxLayout()
-        deadzone_layout.setSpacing(15)  # Add spacing between control groups
+        # Deadzone controls in separate row (only for transmitter)
+        self.deadzone_layout = QHBoxLayout()
+        self.deadzone_layout.setSpacing(15)  # Add spacing between control groups
         
-        deadzone_layout.addWidget(QLabel("Roll Deadzone:"))
+        self.deadzone_layout.addWidget(QLabel("Roll Deadzone:"))
         from PySide6.QtWidgets import QSlider
         self.roll_deadzone_slider = QSlider(Qt.Horizontal)
         self.roll_deadzone_slider.setMinimum(0)
@@ -776,16 +776,16 @@ class MainWindow(QMainWindow):
         self.roll_deadzone_slider.setMinimumWidth(120)
         self.roll_deadzone_slider.setMaximumWidth(150)
         self.roll_deadzone_slider.setToolTip("Angle below which roll is ignored")
-        deadzone_layout.addWidget(self.roll_deadzone_slider)
+        self.deadzone_layout.addWidget(self.roll_deadzone_slider)
         
         self.roll_deadzone_label = QLabel("3°")
         self.roll_deadzone_label.setMinimumWidth(35)
         self.roll_deadzone_slider.valueChanged.connect(lambda v: self.roll_deadzone_label.setText(f"{v}°"))
-        deadzone_layout.addWidget(self.roll_deadzone_label)
+        self.deadzone_layout.addWidget(self.roll_deadzone_label)
         
-        deadzone_layout.addSpacing(20)  # Extra space between groups
+        self.deadzone_layout.addSpacing(20)  # Extra space between groups
         
-        deadzone_layout.addWidget(QLabel("Pitch Deadzone:"))
+        self.deadzone_layout.addWidget(QLabel("Pitch Deadzone:"))
         self.pitch_deadzone_slider = QSlider(Qt.Horizontal)
         self.pitch_deadzone_slider.setMinimum(0)
         self.pitch_deadzone_slider.setMaximum(30)  # 0-30 degrees
@@ -793,16 +793,16 @@ class MainWindow(QMainWindow):
         self.pitch_deadzone_slider.setMinimumWidth(120)
         self.pitch_deadzone_slider.setMaximumWidth(150)
         self.pitch_deadzone_slider.setToolTip("Angle below which pitch is ignored")
-        deadzone_layout.addWidget(self.pitch_deadzone_slider)
+        self.deadzone_layout.addWidget(self.pitch_deadzone_slider)
         
         self.pitch_deadzone_label = QLabel("3°")
         self.pitch_deadzone_label.setMinimumWidth(35)
         self.pitch_deadzone_slider.valueChanged.connect(lambda v: self.pitch_deadzone_label.setText(f"{v}°"))
-        deadzone_layout.addWidget(self.pitch_deadzone_label)
+        self.deadzone_layout.addWidget(self.pitch_deadzone_label)
         
-        deadzone_layout.addSpacing(20)  # Extra space between groups
+        self.deadzone_layout.addSpacing(20)  # Extra space between groups
         
-        deadzone_layout.addWidget(QLabel("Throttle Sens:"))
+        self.deadzone_layout.addWidget(QLabel("Throttle Sens:"))
         self.throttle_sensitivity_slider = QSlider(Qt.Horizontal)
         self.throttle_sensitivity_slider.setMinimum(1)
         self.throttle_sensitivity_slider.setMaximum(20)  # 1-20x sensitivity
@@ -810,16 +810,16 @@ class MainWindow(QMainWindow):
         self.throttle_sensitivity_slider.setMinimumWidth(120)
         self.throttle_sensitivity_slider.setMaximumWidth(150)
         self.throttle_sensitivity_slider.setToolTip("How quickly throttle responds to rotation")
-        deadzone_layout.addWidget(self.throttle_sensitivity_slider)
+        self.deadzone_layout.addWidget(self.throttle_sensitivity_slider)
         
         self.throttle_sensitivity_label = QLabel("5x")
         self.throttle_sensitivity_label.setMinimumWidth(35)
         self.throttle_sensitivity_slider.valueChanged.connect(lambda v: self.throttle_sensitivity_label.setText(f"{v}x"))
-        deadzone_layout.addWidget(self.throttle_sensitivity_label)
+        self.deadzone_layout.addWidget(self.throttle_sensitivity_label)
         
-        deadzone_layout.addSpacing(20)  # Extra space between groups
+        self.deadzone_layout.addSpacing(20)  # Extra space between groups
         
-        deadzone_layout.addWidget(QLabel("Yaw Deadzone:"))
+        self.deadzone_layout.addWidget(QLabel("Yaw Deadzone:"))
         self.yaw_deadzone_slider = QSlider(Qt.Horizontal)
         self.yaw_deadzone_slider.setMinimum(0)
         self.yaw_deadzone_slider.setMaximum(50)  # 0-50 deg/s
@@ -827,35 +827,35 @@ class MainWindow(QMainWindow):
         self.yaw_deadzone_slider.setMinimumWidth(120)
         self.yaw_deadzone_slider.setMaximumWidth(150)
         self.yaw_deadzone_slider.setToolTip("Ignore small yaw rotation rates (gz) for throttle")
-        deadzone_layout.addWidget(self.yaw_deadzone_slider)
+        self.deadzone_layout.addWidget(self.yaw_deadzone_slider)
         
         self.yaw_deadzone_label = QLabel("5°/s")
         self.yaw_deadzone_label.setMinimumWidth(40)
         self.yaw_deadzone_slider.valueChanged.connect(lambda v: self.yaw_deadzone_label.setText(f"{v}°/s"))
-        deadzone_layout.addWidget(self.yaw_deadzone_label)
+        self.deadzone_layout.addWidget(self.yaw_deadzone_label)
         
-        deadzone_layout.addStretch()
+        self.deadzone_layout.addStretch()
         
-        joystick_layout.addLayout(deadzone_layout)
+        joystick_layout.addLayout(self.deadzone_layout)
         
-        # Invert controls in separate row
-        invert_layout = QHBoxLayout()
+        # Invert controls in separate row (only for transmitter)
+        self.invert_layout = QHBoxLayout()
         from PySide6.QtWidgets import QCheckBox
         self.invert_roll_check = QCheckBox("Invert Roll")
         self.invert_roll_check.setChecked(False)
-        invert_layout.addWidget(self.invert_roll_check)
+        self.invert_layout.addWidget(self.invert_roll_check)
         
         self.invert_pitch_check = QCheckBox("Invert Pitch")
         self.invert_pitch_check.setChecked(True)  # Inverted by default
-        invert_layout.addWidget(self.invert_pitch_check)
+        self.invert_layout.addWidget(self.invert_pitch_check)
         
         self.gesture_throttle_check = QCheckBox("Gesture Throttle")
         self.gesture_throttle_check.setChecked(True)  # Enabled by default
         self.gesture_throttle_check.setToolTip("Control throttle by rotating sensor (gz - yaw rate)")
-        invert_layout.addWidget(self.gesture_throttle_check)
-        invert_layout.addStretch()
+        self.invert_layout.addWidget(self.gesture_throttle_check)
+        self.invert_layout.addStretch()
         
-        joystick_layout.addLayout(invert_layout)
+        joystick_layout.addLayout(self.invert_layout)
         
         # Joystick widgets
         sticks_layout = QHBoxLayout()
@@ -897,6 +897,23 @@ class MainWindow(QMainWindow):
                      self.gx_label, self.gy_label, self.gz_label,
                      self.roll_label, self.pitch_label, self.yaw_label]:
             label.setFont(font)
+    def show_control_widgets(self, show):
+        """Show or hide control widgets based on mode."""
+        # Find all widgets in control layouts and set visibility
+        for i in range(self.control_mode_layout.count()):
+            widget = self.control_mode_layout.itemAt(i).widget()
+            if widget:
+                widget.setVisible(show)
+                
+        for i in range(self.deadzone_layout.count()):
+            widget = self.deadzone_layout.itemAt(i).widget()
+            if widget:
+                widget.setVisible(show)
+                
+        for i in range(self.invert_layout.count()):
+            widget = self.invert_layout.itemAt(i).widget()
+            if widget:
+                widget.setVisible(show)
             
     def refresh_ports(self):
         """Refresh the list of available COM ports."""
@@ -913,9 +930,13 @@ class MainWindow(QMainWindow):
         if self.transmitter_radio.isChecked():
             self.operation_mode = 'transmitter'
             self.status_label.setText("Status: Transmitter Mode - Reads sensor and sends MAVLink commands")
+            # Show control widgets
+            self.show_control_widgets(True)
         else:
             self.operation_mode = 'receiver'
             self.status_label.setText("Status: Receiver Mode - Receives ESP-NOW data and displays")
+            # Hide control widgets
+            self.show_control_widgets(False)
         
         # Update serial reader mode
         self.serial_reader.set_mode(self.operation_mode)
@@ -1075,8 +1096,8 @@ class MainWindow(QMainWindow):
         # Update 3D visualization with calibrated angles
         self.gl_widget.update_orientation(roll_deg, pitch_deg, yaw_deg)
         
-        # If in IMU control mode, update stick positions based on angles
-        if self.control_mode_combo.currentIndex() == 1:  # IMU Controlled
+        # ONLY process controls in TRANSMITTER mode
+        if self.operation_mode == 'transmitter' and self.control_mode_combo.currentIndex() == 1:  # IMU Controlled
             # Get max angle setting
             max_angle_text = self.max_angle_combo.currentText()
             max_angle = float(max_angle_text.replace('°', ''))
@@ -1168,12 +1189,15 @@ class MainWindow(QMainWindow):
             self.throttle_yaw_stick.set_position(yaw_stick_pos, throttle_pos)
             self.yaw_stick = yaw_stick_pos
         
-        # Update MAVLink commands with latest IMU data
-        self.update_mavlink_commands()
-        
-        # In transmitter mode, send data to ESP for ESP-NOW transmission
-        if self.operation_mode == 'transmitter' and self.is_connected:
-            self.send_espnow_data(ax, ay, az, gx, gy, gz)
+            # Update MAVLink commands with latest IMU data
+            self.update_mavlink_commands()
+            
+            # In transmitter mode, send data to ESP for ESP-NOW transmission
+            if self.is_connected:
+                self.send_espnow_data(ax, ay, az, gx, gy, gz)
+        elif self.operation_mode == 'receiver':
+            # In receiver mode, just update display - controls are set by on_mavlink_received
+            self.update_mavlink_commands()
         
     def send_espnow_data(self, ax, ay, az, gx, gy, gz):
         """Send MAVLink control data to ESP for ESP-NOW transmission."""
