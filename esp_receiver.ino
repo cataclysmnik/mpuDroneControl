@@ -29,7 +29,7 @@ typedef struct
 MavlinkData rxData;
 
 // Callback when data is received
-void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
+void OnDataRecv(const esp_now_recv_info *recv_info, const uint8_t *incomingData, int len)
 {
     if (len == sizeof(MavlinkData))
     {

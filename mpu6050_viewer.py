@@ -167,37 +167,56 @@ class SerialReader(QThread):
                 if self.serial_port.in_waiting > 0:
                     line = self.serial_port.readline().decode('utf-8').strip()
                     
+                    # Skip empty lines
+                    if not line:
+                        continue
+                    
                     if self.mode == 'transmitter':
                         # Transmitter mode: read sensor data (ax,ay,az,gx,gy,gz)
+                        # Skip status messages from ESP
+                        if line.startswith(('ESPNOW_', 'Data sent:', 'Error', 'TX:', 'Transmitter MAC:', 'ESP-NOW', 'Waiting', 'System')):
+                            continue
+                        
                         parts = line.split(',')
                         if len(parts) == 6:
-                            ax, ay, az, gx, gy, gz = map(float, parts)
-                            self.data_received.emit(ax, ay, az, gx, gy, gz)
+                            try:
+                                ax, ay, az, gx, gy, gz = map(float, parts)
+                                self.data_received.emit(ax, ay, az, gx, gy, gz)
+                            except ValueError:
+                                # Skip lines that can't be converted to floats
+                                continue
                     
                     elif self.mode == 'receiver':
                         # Receiver mode: Parse ESP-NOW packet with MAVLink data
                         # Expected format from ESP: "ESPNOW:<hex_data>"
-                        # Or fallback CSV format: roll,pitch,throttle,yaw,ax,ay,az,gx,gy,gz
+                        # Or CSV format: "CSV: value,value,..."
                         if line.startswith('ESPNOW:'):
                             hex_data = line[7:]
                             self._parse_espnow_packet(hex_data)
-                        else:
-                            # Fallback: CSV format for testing without ESP-NOW
-                            parts = line.split(',')
+                        elif line.startswith('CSV:'):
+                            # CSV format with prefix
+                            csv_data = line[4:].strip()
+                            parts = csv_data.split(',')
                             if len(parts) == 10:
-                                # Format: roll_stick,pitch_stick,throttle,yaw_stick,ax,ay,az,gx,gy,gz
-                                roll_stick, pitch_stick, throttle, yaw_stick, ax, ay, az, gx, gy, gz = map(float, parts)
-                                mavlink_data = {
-                                    'roll_stick': roll_stick,
-                                    'pitch_stick': pitch_stick,
-                                    'throttle': throttle,
-                                    'yaw_stick': yaw_stick,
-                                    'ax': ax, 'ay': ay, 'az': az,
-                                    'gx': gx, 'gy': gy, 'gz': gz
-                                }
-                                self.mavlink_received.emit(mavlink_data)
-                                # Also emit raw sensor data for visualization
-                                self.data_received.emit(ax, ay, az, gx, gy, gz)
+                                try:
+                                    roll_stick, pitch_stick, throttle, yaw_stick, ax, ay, az, gx, gy, gz = map(float, parts)
+                                    mavlink_data = {
+                                        'roll_stick': roll_stick,
+                                        'pitch_stick': pitch_stick,
+                                        'throttle': throttle,
+                                        'yaw_stick': yaw_stick,
+                                        'ax': ax, 'ay': ay, 'az': az,
+                                        'gx': gx, 'gy': gy, 'gz': gz
+                                    }
+                                    self.mavlink_received.emit(mavlink_data)
+                                    # Also emit raw sensor data for visualization
+                                    self.data_received.emit(ax, ay, az, gx, gy, gz)
+                                except ValueError:
+                                    # Skip lines that can't be converted
+                                    continue
+                        # Skip status messages
+                        elif line.startswith(('Receiver MAC', 'Copy this MAC', 'Error', 'ESP-NOW', 'Waiting')):
+                            continue
                     
             except Exception as e:
                 self.error_occurred.emit(f"Read error: {str(e)}")

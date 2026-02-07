@@ -15,63 +15,50 @@
  */
 
 #include <Wire.h>
-#include <MPU6050.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
 
-MPU6050 mpu;
+Adafruit_MPU6050 mpu;
 
 void setup()
 {
     Serial.begin(115200);
-    Wire.begin();
+
+    delay(1500); // Allow MPU to boot
+    Wire.begin(21, 22);
+    Wire.setClock(100000);
 
     // Initialize MPU6050
-    mpu.initialize();
-
-    if (!mpu.testConnection())
+    while (!mpu.begin())
     {
-        Serial.println("MPU6050 connection failed");
-        while (1)
-            ;
+        delay(200); // Retry until MPU is ready
     }
 
     // Configure MPU6050
-    mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_2); // ±2g
-    mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250); // ±250°/s
+    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
     Serial.println("MPU6050 Ready");
 }
 
 void loop()
 {
-    int16_t ax, ay, az;
-    int16_t gx, gy, gz;
-
-    // Read raw sensor data
-    mpu.getAcceleration(&ax, &ay, &az);
-    mpu.getRotation(&gx, &gy, &gz);
-
-    // Convert to physical units
-    // Accelerometer: ±2g -> divide by 16384 to get g
-    // Gyroscope: ±250°/s -> divide by 131 to get °/s
-    float accelX = ax / 16384.0;
-    float accelY = ay / 16384.0;
-    float accelZ = az / 16384.0;
-    float gyroX = gx / 131.0;
-    float gyroY = gy / 131.0;
-    float gyroZ = gz / 131.0;
+    sensors_event_t accel, gyro, temp;
+    mpu.getEvent(&accel, &gyro, &temp);
 
     // Send as CSV (format expected by Python app in transmitter mode)
-    Serial.print(accelX, 2);
+    Serial.print(accel.acceleration.x);
     Serial.print(",");
-    Serial.print(accelY, 2);
+    Serial.print(accel.acceleration.y);
     Serial.print(",");
-    Serial.print(accelZ, 2);
+    Serial.print(accel.acceleration.z);
     Serial.print(",");
-    Serial.print(gyroX, 2);
+    Serial.print(gyro.gyro.x);
     Serial.print(",");
-    Serial.print(gyroY, 2);
+    Serial.print(gyro.gyro.y);
     Serial.print(",");
-    Serial.println(gyroZ, 2);
+    Serial.println(gyro.gyro.z);
 
-    delay(20); // 50Hz update rate
+    delay(10); // ~100Hz update rate
 }

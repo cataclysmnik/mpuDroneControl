@@ -6,7 +6,7 @@
  *
  * Hardware:
  * - ESP32
- * - MPU6050 (I2C: SDA=GPIO21, SCL=GPIO22 on most ESP32)
+ * - MPU6050 (I2C: SDA=GPIO21, SCL=GPIO22)
  *
  * This can work in two modes:
  * 1. Standalone: Reads MPU6050, processes data, and sends via ESP-NOW
@@ -14,15 +14,16 @@
  */
 
 #include <Wire.h>
-#include <MPU6050.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
 #include <esp_now.h>
 #include <WiFi.h>
 
 // MPU6050 object
-MPU6050 mpu;
+Adafruit_MPU6050 mpu;
 
 // Receiver ESP MAC Address - CHANGE THIS
-uint8_t receiverMAC[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+uint8_t receiverMAC[] = {0xC0, 0xCD, 0xD6, 0x8D, 0xAB, 0x1C};
 
 // Data structure for MAVLink control data
 typedef struct
@@ -41,11 +42,11 @@ esp_now_peer_info_t peerInfo;
 // Configuration
 #define SEND_TO_PC true     // Set false if no PC connection needed
 #define SEND_TO_ESPNOW true // Set false to disable ESP-NOW
-#define UPDATE_RATE_MS 20   // 50Hz update rate
+#define UPDATE_RATE_MS 10   // ~100Hz update rate
 
 unsigned long lastUpdate = 0;
 
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status)
 {
     if (SEND_TO_PC)
     {
@@ -63,22 +64,24 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 void setup()
 {
     Serial.begin(115200);
-    Wire.begin();
+
+    delay(1500); // Allow MPU to boot
+    Wire.begin(21, 22);
+    Wire.setClock(100000);
 
     // Initialize MPU6050
     Serial.println("Initializing MPU6050...");
-    mpu.initialize();
 
-    if (!mpu.testConnection())
+    while (!mpu.begin())
     {
-        Serial.println("MPU6050 connection failed!");
-        while (1)
-            delay(100);
+        Serial.println("MPU6050 connection failed! Retrying...");
+        delay(200);
     }
 
     // Configure MPU6050
-    mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_2); // ±2g
-    mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250); // ±250°/s
+    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
     Serial.println("MPU6050 OK");
 
@@ -125,34 +128,31 @@ void loop()
         lastUpdate = currentTime;
 
         // Read MPU6050
-        int16_t ax, ay, az;
-        int16_t gx, gy, gz;
+        sensors_event_t accel, gyro, temp;
+        mpu.getEvent(&accel, &gyro, &temp);
 
-        mpu.getAcceleration(&ax, &ay, &az);
-        mpu.getRotation(&gx, &gy, &gz);
-
-        // Convert to physical units
-        float accelX = ax / 16384.0;
-        float accelY = ay / 16384.0;
-        float accelZ = az / 16384.0;
-        float gyroX = gx / 131.0;
-        float gyroY = gy / 131.0;
-        float gyroZ = gz / 131.0;
+        // Extract values (Adafruit library returns in m/s² and rad/s)
+        float accelX = accel.acceleration.x;
+        float accelY = accel.acceleration.y;
+        float accelZ = accel.acceleration.z;
+        float gyroX = gyro.gyro.x;
+        float gyroY = gyro.gyro.y;
+        float gyroZ = gyro.gyro.z;
 
         if (SEND_TO_PC)
         {
             // Send CSV format to PC for Python app (transmitter mode)
-            Serial.print(accelX, 2);
+            Serial.print(accelX);
             Serial.print(",");
-            Serial.print(accelY, 2);
+            Serial.print(accelY);
             Serial.print(",");
-            Serial.print(accelZ, 2);
+            Serial.print(accelZ);
             Serial.print(",");
-            Serial.print(gyroX, 2);
+            Serial.print(gyroX);
             Serial.print(",");
-            Serial.print(gyroY, 2);
+            Serial.print(gyroY);
             Serial.print(",");
-            Serial.println(gyroZ, 2);
+            Serial.println(gyroZ);
         }
 
         // Check for control data from PC (if connected)
