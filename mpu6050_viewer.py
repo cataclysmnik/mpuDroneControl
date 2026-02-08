@@ -176,33 +176,30 @@ class SerialReader(QThread):
                         if line.startswith(('ESPNOW_', 'Data sent:', 'Error', 'TX:', 'Transmitter MAC:', 'ESP-NOW', 'Waiting', 'System', 'Initializing', 'Calibrat', 'MPU', '===')):
                             continue
                         
-                        # Check for dual MPU format: DUAL:roll,pitch,throttle,yaw,mpu1_gx,mpu1_gy,mpu1_gz,mpu2_gx,mpu2_gy,mpu2_gz
-                        if line.startswith('DUAL:'):
+                        # Check for dual MPU format (raw CSV, no prefix): roll,pitch,throttle,yaw,mpu1_gx,mpu1_gy,mpu1_gz,mpu2_gx,mpu2_gy,mpu2_gz
+                        parts = line.split(',')
+                        if len(parts) >= 10:
                             self.dual_mpu_mode = True
-                            csv_data = line[5:].strip()
-                            parts = csv_data.split(',')
-                            if len(parts) >= 10:
-                                try:
-                                    roll, pitch, throttle, yaw = map(float, parts[0:4])
-                                    mpu1_gx, mpu1_gy, mpu1_gz = map(float, parts[4:7])
-                                    mpu2_gx, mpu2_gy, mpu2_gz = map(float, parts[7:10])
-                                    
-                                    dual_data = {
-                                        'roll_stick': roll,
-                                        'pitch_stick': pitch,
-                                        'throttle': throttle,
-                                        'yaw_stick': yaw,
-                                        'mpu1_gx': mpu1_gx, 'mpu1_gy': mpu1_gy, 'mpu1_gz': mpu1_gz,
-                                        'mpu2_gx': mpu2_gx, 'mpu2_gy': mpu2_gy, 'mpu2_gz': mpu2_gz
-                                    }
-                                    self.dual_data_received.emit(dual_data)
-                                except ValueError:
-                                    continue
+                            try:
+                                roll, pitch, throttle, yaw = map(float, parts[0:4])
+                                mpu1_gx, mpu1_gy, mpu1_gz = map(float, parts[4:7])
+                                mpu2_gx, mpu2_gy, mpu2_gz = map(float, parts[7:10])
+                                
+                                dual_data = {
+                                    'roll_stick': roll,
+                                    'pitch_stick': pitch,
+                                    'throttle': throttle,
+                                    'yaw_stick': yaw,
+                                    'mpu1_gx': mpu1_gx, 'mpu1_gy': mpu1_gy, 'mpu1_gz': mpu1_gz,
+                                    'mpu2_gx': mpu2_gx, 'mpu2_gy': mpu2_gy, 'mpu2_gz': mpu2_gz
+                                }
+                                self.dual_data_received.emit(dual_data)
+                            except ValueError:
+                                continue
                             continue
                         
                         # Legacy single MPU format: ax,ay,az,gx,gy,gz
-                        parts = line.split(',')
-                        if len(parts) == 6:
+                        elif len(parts) == 6:
                             self.dual_mpu_mode = False
                             try:
                                 ax, ay, az, gx, gy, gz = map(float, parts)
@@ -212,66 +209,56 @@ class SerialReader(QThread):
                                 continue
                     
                     elif self.mode == 'receiver':
-                        # Receiver mode: Parse ESP-NOW packet with MAVLink data
-                        # Expected format from ESP: "ESPNOW:<hex_data>"
-                        # Or CSV formats: "CSV: value,..." or "DUAL_CSV: value,..."
-                        if line.startswith('ESPNOW:'):
-                            hex_data = line[7:]
-                            self._parse_espnow_packet(hex_data)
-                        elif line.startswith('DUAL_CSV:'):
-                            # Dual MPU CSV format
+                        # Receiver mode: Parse raw CSV data from ESP-NOW receiver
+                        # Expected format (raw CSV, no prefix): roll,pitch,throttle,yaw,mpu1_ax,mpu1_ay,...
+                        parts = line.split(',')
+                        if len(parts) >= 16:
                             self.dual_mpu_mode = True
-                            csv_data = line[9:].strip()
-                            parts = csv_data.split(',')
-                            if len(parts) >= 16:
-                                try:
-                                    roll, pitch, throttle, yaw = map(float, parts[0:4])
-                                    mpu1_ax, mpu1_ay, mpu1_az = map(float, parts[4:7])
-                                    mpu1_gx, mpu1_gy, mpu1_gz = map(float, parts[7:10])
-                                    mpu2_ax, mpu2_ay, mpu2_az = map(float, parts[10:13])
-                                    mpu2_gx, mpu2_gy, mpu2_gz = map(float, parts[13:16])
-                                    
-                                    mavlink_data = {
-                                        'roll_stick': roll,
-                                        'pitch_stick': pitch,
-                                        'throttle': throttle,
-                                        'yaw_stick': yaw,
-                                        'dual_mpu': True,
-                                        'mpu1_ax': mpu1_ax, 'mpu1_ay': mpu1_ay, 'mpu1_az': mpu1_az,
-                                        'mpu1_gx': mpu1_gx, 'mpu1_gy': mpu1_gy, 'mpu1_gz': mpu1_gz,
-                                        'mpu2_ax': mpu2_ax, 'mpu2_ay': mpu2_ay, 'mpu2_az': mpu2_az,
-                                        'mpu2_gx': mpu2_gx, 'mpu2_gy': mpu2_gy, 'mpu2_gz': mpu2_gz
-                                    }
-                                    self.mavlink_received.emit(mavlink_data)
-                                    # Emit MPU1 data for visualization
-                                    self.data_received.emit(mpu1_ax, mpu1_ay, mpu1_az, mpu1_gx, mpu1_gy, mpu1_gz)
-                                except ValueError:
-                                    continue
+                            try:
+                                roll, pitch, throttle, yaw = map(float, parts[0:4])
+                                mpu1_ax, mpu1_ay, mpu1_az = map(float, parts[4:7])
+                                mpu1_gx, mpu1_gy, mpu1_gz = map(float, parts[7:10])
+                                mpu2_ax, mpu2_ay, mpu2_az = map(float, parts[10:13])
+                                mpu2_gx, mpu2_gy, mpu2_gz = map(float, parts[13:16])
+                                
+                                mavlink_data = {
+                                    'roll_stick': roll,
+                                    'pitch_stick': pitch,
+                                    'throttle': throttle,
+                                    'yaw_stick': yaw,
+                                    'dual_mpu': True,
+                                    'mpu1_ax': mpu1_ax, 'mpu1_ay': mpu1_ay, 'mpu1_az': mpu1_az,
+                                    'mpu1_gx': mpu1_gx, 'mpu1_gy': mpu1_gy, 'mpu1_gz': mpu1_gz,
+                                    'mpu2_ax': mpu2_ax, 'mpu2_ay': mpu2_ay, 'mpu2_az': mpu2_az,
+                                    'mpu2_gx': mpu2_gx, 'mpu2_gy': mpu2_gy, 'mpu2_gz': mpu2_gz
+                                }
+                                self.mavlink_received.emit(mavlink_data)
+                                # Emit MPU1 data for visualization
+                                self.data_received.emit(mpu1_ax, mpu1_ay, mpu1_az, mpu1_gx, mpu1_gy, mpu1_gz)
+                            except ValueError:
+                                continue
                             continue
-                        elif line.startswith('CSV:'):
-                            # Legacy single MPU CSV format
+                        elif len(parts) == 10:
+                            # Legacy single MPU CSV format (raw, no prefix)
                             self.dual_mpu_mode = False
-                            csv_data = line[4:].strip()
-                            parts = csv_data.split(',')
-                            if len(parts) == 10:
-                                try:
-                                    roll_stick, pitch_stick, throttle, yaw_stick, ax, ay, az, gx, gy, gz = map(float, parts)
-                                    mavlink_data = {
-                                        'roll_stick': roll_stick,
-                                        'pitch_stick': pitch_stick,
-                                        'throttle': throttle,
-                                        'yaw_stick': yaw_stick,
-                                        'dual_mpu': False,
-                                        'ax': ax, 'ay': ay, 'az': az,
-                                        'gx': gx, 'gy': gy, 'gz': gz
-                                    }
-                                    self.mavlink_received.emit(mavlink_data)
-                                    # Also emit raw sensor data for visualization
-                                    self.data_received.emit(ax, ay, az, gx, gy, gz)
-                                except ValueError:
-                                    continue
-                        # Skip status messages
-                        elif line.startswith(('Receiver MAC', 'Copy this MAC', 'Error', 'ESP-NOW', 'Waiting', 'Received wrong')):
+                            try:
+                                roll_stick, pitch_stick, throttle, yaw_stick, ax, ay, az, gx, gy, gz = map(float, parts)
+                                mavlink_data = {
+                                    'roll_stick': roll_stick,
+                                    'pitch_stick': pitch_stick,
+                                    'throttle': throttle,
+                                    'yaw_stick': yaw_stick,
+                                    'dual_mpu': False,
+                                    'ax': ax, 'ay': ay, 'az': az,
+                                    'gx': gx, 'gy': gy, 'gz': gz
+                                }
+                                self.mavlink_received.emit(mavlink_data)
+                                # Also emit raw sensor data for visualization
+                                self.data_received.emit(ax, ay, az, gx, gy, gz)
+                            except ValueError:
+                                continue
+                        # Skip status messages (allow initialization messages but ignore others)
+                        elif line.startswith(('Receiver MAC', 'Copy this MAC', 'Error', 'ESP-NOW', 'Waiting')):
                             continue
                     
             except Exception as e:

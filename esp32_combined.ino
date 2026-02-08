@@ -79,17 +79,7 @@ unsigned long lastUpdate = 0;
 
 void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status)
 {
-    if (SEND_TO_PC)
-    {
-        if (status == ESP_NOW_SEND_SUCCESS)
-        {
-            Serial.println("TX:OK");
-        }
-        else
-        {
-            Serial.println("TX:FAIL");
-        }
-    }
+    // No status messages - keep serial output clean
 }
 
 // Helper function to calculate roll angle from accelerometer
@@ -247,10 +237,9 @@ void loop()
         smoothed_yaw = smoothValue(yaw_raw, smoothed_yaw, SMOOTHING_FACTOR);
         txData.yaw_stick = smoothed_yaw;
 
-        // Send data to PC for monitoring (CSV format)
+        // Send data to PC for monitoring (CSV format - no prefix)
         if (SEND_TO_PC)
         {
-            Serial.print("DUAL:");
             Serial.print(txData.roll_stick);
             Serial.print(",");
             Serial.print(txData.pitch_stick);
@@ -274,15 +263,10 @@ void loop()
             Serial.println(txData.mpu2_gz);
         }
 
-        // Send via ESP-NOW
+        // Send via ESP-NOW (no status messages)
         if (SEND_TO_ESPNOW)
         {
-            esp_err_t result = esp_now_send(receiverMAC, (uint8_t *)&txData, sizeof(DualControlData));
-
-            if (result != ESP_OK && SEND_TO_PC)
-            {
-                Serial.println("ESP-NOW send error");
-            }
+            esp_now_send(receiverMAC, (uint8_t *)&txData, sizeof(DualControlData));
         }
     }
 }

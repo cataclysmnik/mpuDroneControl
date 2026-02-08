@@ -37,23 +37,7 @@ void OnDataRecv(const esp_now_recv_info *recv_info, const uint8_t *incomingData,
     {
         memcpy(&rxData, incomingData, sizeof(DualControlData));
 
-        // Convert to hex string for Python app
-        uint8_t *dataBytes = (uint8_t *)&rxData;
-        String hexString = "ESPNOW:";
-
-        for (int i = 0; i < sizeof(DualControlData); i++)
-        {
-            if (dataBytes[i] < 16)
-                hexString += "0";
-            hexString += String(dataBytes[i], HEX);
-        }
-        hexString.toUpperCase();
-
-        // Send to PC via Serial
-        Serial.println(hexString);
-
-        // Also send CSV format for easier debugging
-        Serial.print("DUAL_CSV: ");
+        // Send CSV format (no prefix)
         Serial.print(rxData.roll_stick);
         Serial.print(",");
         Serial.print(rxData.pitch_stick);
@@ -88,13 +72,7 @@ void OnDataRecv(const esp_now_recv_info *recv_info, const uint8_t *incomingData,
         Serial.print(",");
         Serial.println(rxData.mpu2_gz);
     }
-    else
-    {
-        Serial.print("Received wrong data size: ");
-        Serial.print(len);
-        Serial.print(" expected: ");
-        Serial.println(sizeof(DualControlData));
-    }
+    // Silently ignore wrong data size
 }
 
 void setup()

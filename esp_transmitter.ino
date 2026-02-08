@@ -40,14 +40,7 @@ esp_now_peer_info_t peerInfo;
 // Callback when data is sent
 void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status)
 {
-    if (status == ESP_NOW_SEND_SUCCESS)
-    {
-        Serial.println("ESPNOW_TX:OK");
-    }
-    else
-    {
-        Serial.println("ESPNOW_TX:FAIL");
-    }
+    // No status messages - keep serial output clean
 }
 
 void setup()
@@ -113,31 +106,10 @@ void loop()
                 // Copy to struct
                 memcpy(&txData, buffer, sizeof(DualControlData));
 
-                // Send via ESP-NOW
-                esp_err_t result = esp_now_send(receiverMAC, (uint8_t *)&txData, sizeof(DualControlData));
-
-                if (result == ESP_OK)
-                {
-                    Serial.print("Data sent: R=");
-                    Serial.print(txData.roll_stick);
-                    Serial.print(" P=");
-                    Serial.print(txData.pitch_stick);
-                    Serial.print(" T=");
-                    Serial.print(txData.throttle);
-                    Serial.print(" Y=");
-                    Serial.println(txData.yaw_stick);
-                }
-                else
-                {
-                    Serial.println("Error sending data");
-                }
+                // Send via ESP-NOW (no status messages)
+                esp_now_send(receiverMAC, (uint8_t *)&txData, sizeof(DualControlData));
             }
-            else
-            {
-                Serial.print("Invalid data length: ");
-                Serial.print(hexData.length());
-                Serial.println(" (expected 104 hex chars for dual MPU)");
-            }
+            // Silently ignore invalid data length
         }
     }
 
