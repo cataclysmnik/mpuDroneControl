@@ -2,6 +2,32 @@
 
 A real-time 3D visualization application for MPU6050 IMU sensor data with MAVLink command generation and ESP-NOW wireless transmission support using PySide6 and OpenGL.
 
+## 🆕 Dual MPU6050 Support (Updated)
+
+**NEW:** The system now supports **TWO MPU6050 sensors** for independent 4-axis control!
+
+- **MPU #1 (0x68)**: Roll & Pitch control (X and Y axis rotation)
+- **MPU #2 (0x69)**: Throttle & Yaw control (X and Y axis rotation)
+
+This allows for intuitive two-handed controller operation where each hand controls different axes. See [DUAL_MPU_QUICKSTART.md](DUAL_MPU_QUICKSTART.md) for setup instructions.
+
+### ✨ Python Viewer Updates
+The Python application now **automatically detects** dual vs single MPU mode:
+- ✅ **Auto-detection** - No configuration needed
+- ✅ **Backward compatible** - Works with single MPU setups
+- ✅ **Enhanced display** - Shows control values from both MPUs
+- ✅ **Mode indicators** - Clear visual feedback for dual MPU mode
+
+See [PYTHON_DUAL_MPU_UPDATE.md](PYTHON_DUAL_MPU_UPDATE.md) for details.
+
+### Quick Start with Dual MPU
+1. Wire both MPU6050s to ESP32 (different AD0 pins - see [DUAL_MPU_WIRING.md](DUAL_MPU_WIRING.md))
+2. Upload `esp32_combined.ino` to transmitter ESP32
+3. Upload `esp_receiver.ino` to receiver ESP32  
+4. Run Python app - dual mode activates automatically!
+
+---
+
 ## Features
 
 - **Dual Mode Operation**: 
@@ -34,11 +60,18 @@ pip install PySide6 pyserial numpy PyOpenGL PyOpenGL-accelerate pymavlink
 
 ## Hardware Setup
 
-### Option 1: Single Laptop Testing
+### Option 1: Single MPU6050 (Legacy)
 - One Arduino/ESP32 with MPU6050
 - Serial connection to PC
 
-### Option 2: Wireless Two-Laptop Setup (ESP-NOW)
+### Option 2: Dual MPU6050 (Recommended for Full Control)
+- **ESP32** with **TWO MPU6050 sensors**
+- MPU #1 (AD0=GND, address 0x68) for Roll & Pitch
+- MPU #2 (AD0=3.3V, address 0x69) for Throttle & Yaw
+- Upload `esp32_combined.ino` to ESP32
+- See [DUAL_MPU_WIRING.md](DUAL_MPU_WIRING.md) for complete wiring guide
+
+### Option 3: Wireless Two-Laptop Setup (ESP-NOW)
 
 #### Transmitter Side:
 1. **Laptop 1** running Python app in **Transmitter Mode**
@@ -85,18 +118,41 @@ pip install PySide6 pyserial numpy PyOpenGL PyOpenGL-accelerate pymavlink
 
 ## Data Formats
 
-### Transmitter Mode Input (from MPU6050):
+### Single MPU Mode Input (from MPU6050):
 ```
 ax,ay,az,gx,gy,gz
 ```
 
-### ESP-NOW Packet Structure (40 bytes):
+### Dual MPU Mode Output (from ESP32):
+```
+DUAL:roll,pitch,throttle,yaw,mpu1_gx,mpu1_gy,mpu1_gz,mpu2_gx,mpu2_gy,mpu2_gz
+```
+
+### ESP-NOW Packet Structure (Single MPU - 40 bytes):
 ```c
 struct {
   float roll_stick;    // -1.0 to 1.0
   float pitch_stick;   // -1.0 to 1.0
   float throttle;      // 0.0 to 1.0
   float yaw_stick;     // -1.0 to 1.0
+  float ax, ay, az;    // Accelerometer (g)
+  float gx, gy, gz;    // Gyroscope (deg/s)
+} // Total: 10 floats × 4 bytes = 40 bytes
+```
+
+### ESP-NOW Packet Structure (Dual MPU - 52 bytes):
+```c
+struct {
+  float roll_stick;      // From MPU1 X-axis
+  float pitch_stick;     // From MPU1 Y-axis
+  float throttle;        // From MPU2 X-axis
+  float yaw_stick;       // From MPU2 Y-axis
+  float mpu1_ax, mpu1_ay, mpu1_az;  // MPU1 accelerometer
+  float mpu1_gx, mpu1_gy, mpu1_gz;  // MPU1 gyroscope
+  float mpu2_ax, mpu2_ay, mpu2_az;  // MPU2 accelerometer
+  float mpu2_gx, mpu2_gy, mpu2_gz;  // MPU2 gyroscope
+} // Total: 13 floats × 4 bytes = 52 bytes
+```
   float ax, ay, az;    // Accelerometer (g)
   float gx, gy, gz;    // Gyroscope (deg/s)
 } // Total: 10 floats × 4 bytes = 40 bytes
@@ -200,11 +256,27 @@ R (Yaw):     -1000 to +1000
 
 ## Files Included
 
-- `mpu6050_viewer.py` - Main Python application
-- `mpu6050_reader.ino` - Arduino sketch for reading MPU6050
-- `esp_transmitter.ino` - ESP32 sketch for transmitting via ESP-NOW
+### Python Application
+- `mpu6050_viewer.py` - **⭐ Main Python application (updated for dual MPU)**
+
+### Arduino/ESP32 Sketches
+- `mpu6050_reader.ino` - Basic MPU6050 reader (single sensor)
+- `esp32_combined.ino` - **⭐ Dual MPU6050 transmitter (recommended)**
+- `esp_transmitter.ino` - ESP32 sketch for PC bridge transmission
 - `esp_receiver.ino` - ESP32 sketch for receiving via ESP-NOW
+
+### Utilities
+- `i2c_scanner.ino` - **🔍 Diagnostic tool for verifying dual MPU wiring**
+
+### Documentation
 - `README.md` - This file
+- `DUAL_MPU_WIRING.md` - **📘 Complete wiring guide for dual MPU setup**
+- `DUAL_MPU_QUICKSTART.md` - **🚀 Quick setup guide for dual MPU**
+- `DUAL_MPU_SUMMARY.md` - **📋 Comprehensive dual MPU reference**
+- `PYTHON_DUAL_MPU_UPDATE.md` - **🐍 Python viewer dual MPU update details**
+- `CONNECTION_CARD.md` - **🔌 Printable quick reference card**
+- `QUICKSTART.md` - Original quick start guide
+- `IMPLEMENTATION.md` - Implementation details
 
 ## Architecture
 

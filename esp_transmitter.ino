@@ -1,8 +1,10 @@
 /*
- * ESP-NOW Transmitter - Reads MPU6050 and sends MAVLink data via ESP-NOW
+ * ESP-NOW Transmitter - Sends dual MPU6050 control data via ESP-NOW
  *
  * This ESP receives data from the PC (Python app) over Serial and transmits
  * it to another ESP using ESP-NOW protocol.
+ *
+ * Updated to support dual MPU6050 controller setup.
  *
  * Hardware:
  * - ESP32 or ESP8266
@@ -17,24 +19,26 @@
 
 // Receiver ESP MAC Address - CHANGE THIS to your receiver's MAC address
 // To find MAC: Upload a simple sketch that prints WiFi.macAddress()
-uint8_t receiverMAC[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+uint8_t receiverMAC[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-// Data structure for MAVLink control data (must match on both sides)
+// Data structure for dual MPU control data (must match on both sides)
 typedef struct
 {
-    float roll_stick;
-    float pitch_stick;
-    float throttle;
-    float yaw_stick;
-    float ax, ay, az; // Accelerometer
-    float gx, gy, gz; // Gyroscope
-} MavlinkData;
+    float roll_stick;                // From MPU1 X-axis
+    float pitch_stick;               // From MPU1 Y-axis
+    float throttle;                  // From MPU2 X-axis
+    float yaw_stick;                 // From MPU2 Y-axis
+    float mpu1_ax, mpu1_ay, mpu1_az; // MPU1 accelerometer
+    float mpu1_gx, mpu1_gy, mpu1_gz; // MPU1 gyroscope
+    float mpu2_ax, mpu2_ay, mpu2_az; // MPU2 accelerometer
+    float mpu2_gx, mpu2_gy, mpu2_gz; // MPU2 gyroscope
+} DualControlData;
 
-MavlinkData txData;
+DualControlData txData;
 esp_now_peer_info_t peerInfo;
 
 // Callback when data is sent
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status)
 {
     if (status == ESP_NOW_SEND_SUCCESS)
     {
@@ -90,40 +94,49 @@ void loop()
         String line = Serial.readStringUntil('\n');
         line.trim();
 
-        // Expected format: "SEND:<40 bytes of hex data>"
+        // Expected format: "SEND:<hex data>"
+        // For dual MPU: 52 bytes = 104 hex chars
         if (line.startsWith("SEND:"))
         {
             String hexData = line.substring(5);
 
-            // Convert hex string to bytes
-            if (hexData.length() == 80)
-            { // 40 bytes = 80 hex chars
-                uint8_t buffer[40];
-                for (int i = 0; i < 40; i++)
+            // Convert hex string to bytes (DualControlData = 52 bytes)
+            if (hexData.length() == 104)
+            { // 52 bytes = 104 hex chars
+                uint8_t buffer[52];
+                for (int i = 0; i < 52; i++)
                 {
                     String byteStr = hexData.substring(i * 2, i * 2 + 2);
                     buffer[i] = (uint8_t)strtol(byteStr.c_str(), NULL, 16);
                 }
 
                 // Copy to struct
-                memcpy(&txData, buffer, sizeof(MavlinkData));
+                memcpy(&txData, buffer, sizeof(DualControlData));
 
                 // Send via ESP-NOW
-                esp_err_t result = esp_now_send(receiverMAC, (uint8_t *)&txData, sizeof(MavlinkData));
+                esp_err_t result = esp_now_send(receiverMAC, (uint8_t *)&txData, sizeof(DualControlData));
 
                 if (result == ESP_OK)
                 {
-                    Serial.print("Data sent: Roll=");
+                    Serial.print("Data sent: R=");
                     Serial.print(txData.roll_stick);
-                    Serial.print(" Pitch=");
+                    Serial.print(" P=");
                     Serial.print(txData.pitch_stick);
-                    Serial.print(" Thr=");
-                    Serial.println(txData.throttle);
+                    Serial.print(" T=");
+                    Serial.print(txData.throttle);
+                    Serial.print(" Y=");
+                    Serial.println(txData.yaw_stick);
                 }
                 else
                 {
                     Serial.println("Error sending data");
                 }
+            }
+            else
+            {
+                Serial.print("Invalid data length: ");
+                Serial.print(hexData.length());
+                Serial.println(" (expected 104 hex chars for dual MPU)");
             }
         }
     }

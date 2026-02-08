@@ -1,45 +1,47 @@
 /*
- * ESP-NOW Receiver - Receives MAVLink data via ESP-NOW and sends to PC
+ * ESP-NOW Receiver - Receives dual MPU6050 control data via ESP-NOW
  *
- * This ESP receives data from the transmitter ESP via ESP-NOW and forwards
- * it to the PC over Serial for display in the Python dashboard.
+ * This ESP receives data from the transmitter ESP (with dual MPU6050s)
+ * via ESP-NOW and forwards it to the PC over Serial for display.
  *
  * Hardware:
  * - ESP32 or ESP8266
  * - Connected to PC running the Python dashboard in Receiver mode
  *
  * Data Flow:
- * Transmitter ESP32 -> ESP-NOW -> This ESP32 -> Serial -> PC (Python)
+ * Transmitter ESP32 (Dual MPU) -> ESP-NOW -> This ESP32 -> Serial -> PC
  */
 
 #include <esp_now.h>
 #include <WiFi.h>
 
-// Data structure for MAVLink control data (must match transmitter)
+// Data structure for dual MPU control data (must match transmitter)
 typedef struct
 {
-    float roll_stick;
-    float pitch_stick;
-    float throttle;
-    float yaw_stick;
-    float ax, ay, az; // Accelerometer
-    float gx, gy, gz; // Gyroscope
-} MavlinkData;
+    float roll_stick;                // From MPU1 X-axis
+    float pitch_stick;               // From MPU1 Y-axis
+    float throttle;                  // From MPU2 X-axis
+    float yaw_stick;                 // From MPU2 Y-axis
+    float mpu1_ax, mpu1_ay, mpu1_az; // MPU1 accelerometer
+    float mpu1_gx, mpu1_gy, mpu1_gz; // MPU1 gyroscope
+    float mpu2_ax, mpu2_ay, mpu2_az; // MPU2 accelerometer
+    float mpu2_gx, mpu2_gy, mpu2_gz; // MPU2 gyroscope
+} DualControlData;
 
-MavlinkData rxData;
+DualControlData rxData;
 
 // Callback when data is received
 void OnDataRecv(const esp_now_recv_info *recv_info, const uint8_t *incomingData, int len)
 {
-    if (len == sizeof(MavlinkData))
+    if (len == sizeof(DualControlData))
     {
-        memcpy(&rxData, incomingData, sizeof(MavlinkData));
+        memcpy(&rxData, incomingData, sizeof(DualControlData));
 
         // Convert to hex string for Python app
         uint8_t *dataBytes = (uint8_t *)&rxData;
         String hexString = "ESPNOW:";
 
-        for (int i = 0; i < sizeof(MavlinkData); i++)
+        for (int i = 0; i < sizeof(DualControlData); i++)
         {
             if (dataBytes[i] < 16)
                 hexString += "0";
@@ -51,7 +53,7 @@ void OnDataRecv(const esp_now_recv_info *recv_info, const uint8_t *incomingData,
         Serial.println(hexString);
 
         // Also send CSV format for easier debugging
-        Serial.print("CSV: ");
+        Serial.print("DUAL_CSV: ");
         Serial.print(rxData.roll_stick);
         Serial.print(",");
         Serial.print(rxData.pitch_stick);
@@ -60,17 +62,38 @@ void OnDataRecv(const esp_now_recv_info *recv_info, const uint8_t *incomingData,
         Serial.print(",");
         Serial.print(rxData.yaw_stick);
         Serial.print(",");
-        Serial.print(rxData.ax);
+        // MPU1 data
+        Serial.print(rxData.mpu1_ax);
         Serial.print(",");
-        Serial.print(rxData.ay);
+        Serial.print(rxData.mpu1_ay);
         Serial.print(",");
-        Serial.print(rxData.az);
+        Serial.print(rxData.mpu1_az);
         Serial.print(",");
-        Serial.print(rxData.gx);
+        Serial.print(rxData.mpu1_gx);
         Serial.print(",");
-        Serial.print(rxData.gy);
+        Serial.print(rxData.mpu1_gy);
         Serial.print(",");
-        Serial.println(rxData.gz);
+        Serial.print(rxData.mpu1_gz);
+        Serial.print(",");
+        // MPU2 data
+        Serial.print(rxData.mpu2_ax);
+        Serial.print(",");
+        Serial.print(rxData.mpu2_ay);
+        Serial.print(",");
+        Serial.print(rxData.mpu2_az);
+        Serial.print(",");
+        Serial.print(rxData.mpu2_gx);
+        Serial.print(",");
+        Serial.print(rxData.mpu2_gy);
+        Serial.print(",");
+        Serial.println(rxData.mpu2_gz);
+    }
+    else
+    {
+        Serial.print("Received wrong data size: ");
+        Serial.print(len);
+        Serial.print(" expected: ");
+        Serial.println(sizeof(DualControlData));
     }
 }
 

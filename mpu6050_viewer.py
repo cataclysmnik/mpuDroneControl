@@ -98,7 +98,8 @@ class SensorFusion:
 class SerialReader(QThread):
     """Thread for reading serial data from MPU6050 or ESP-NOW packets."""
     
-    data_received = Signal(float, float, float, float, float, float)
+    data_received = Signal(float, float, float, float, float, float)  # MPU1 data
+    dual_data_received = Signal(dict)  # For dual MPU mode
     mavlink_received = Signal(dict)  # For receiver mode: receive MAVLink data
     error_occurred = Signal(str)
     
@@ -107,6 +108,7 @@ class SerialReader(QThread):
         self.serial_port = None
         self.running = False
         self.mode = 'transmitter'  # 'transmitter' or 'receiver'
+        self.dual_mpu_mode = False  # Automatically detected
     
     def set_mode(self, mode):
         """Set operation mode: 'transmitter' or 'receiver'."""
@@ -172,13 +174,39 @@ class SerialReader(QThread):
                         continue
                     
                     if self.mode == 'transmitter':
-                        # Transmitter mode: read sensor data (ax,ay,az,gx,gy,gz)
+                        # Transmitter mode: read sensor data
                         # Skip status messages from ESP
-                        if line.startswith(('ESPNOW_', 'Data sent:', 'Error', 'TX:', 'Transmitter MAC:', 'ESP-NOW', 'Waiting', 'System')):
+                        if line.startswith(('ESPNOW_', 'Data sent:', 'Error', 'TX:', 'Transmitter MAC:', 'ESP-NOW', 'Waiting', 'System', 'Initializing', 'Calibrat', 'MPU', '===')):
                             continue
                         
+                        # Check for dual MPU format: DUAL:roll,pitch,throttle,yaw,mpu1_gx,mpu1_gy,mpu1_gz,mpu2_gx,mpu2_gy,mpu2_gz
+                        if line.startswith('DUAL:'):
+                            self.dual_mpu_mode = True
+                            csv_data = line[5:].strip()
+                            parts = csv_data.split(',')
+                            if len(parts) >= 10:
+                                try:
+                                    roll, pitch, throttle, yaw = map(float, parts[0:4])
+                                    mpu1_gx, mpu1_gy, mpu1_gz = map(float, parts[4:7])
+                                    mpu2_gx, mpu2_gy, mpu2_gz = map(float, parts[7:10])
+                                    
+                                    dual_data = {
+                                        'roll_stick': roll,
+                                        'pitch_stick': pitch,
+                                        'throttle': throttle,
+                                        'yaw_stick': yaw,
+                                        'mpu1_gx': mpu1_gx, 'mpu1_gy': mpu1_gy, 'mpu1_gz': mpu1_gz,
+                                        'mpu2_gx': mpu2_gx, 'mpu2_gy': mpu2_gy, 'mpu2_gz': mpu2_gz
+                                    }
+                                    self.dual_data_received.emit(dual_data)
+                                except ValueError:
+                                    continue
+                            continue
+                        
+                        # Legacy single MPU format: ax,ay,az,gx,gy,gz
                         parts = line.split(',')
                         if len(parts) == 6:
+                            self.dual_mpu_mode = False
                             try:
                                 ax, ay, az, gx, gy, gz = map(float, parts)
                                 self.data_received.emit(ax, ay, az, gx, gy, gz)
@@ -189,12 +217,43 @@ class SerialReader(QThread):
                     elif self.mode == 'receiver':
                         # Receiver mode: Parse ESP-NOW packet with MAVLink data
                         # Expected format from ESP: "ESPNOW:<hex_data>"
-                        # Or CSV format: "CSV: value,value,..."
+                        # Or CSV formats: "CSV: value,..." or "DUAL_CSV: value,..."
                         if line.startswith('ESPNOW:'):
                             hex_data = line[7:]
                             self._parse_espnow_packet(hex_data)
+                        elif line.startswith('DUAL_CSV:'):
+                            # Dual MPU CSV format
+                            self.dual_mpu_mode = True
+                            csv_data = line[9:].strip()
+                            parts = csv_data.split(',')
+                            if len(parts) >= 16:
+                                try:
+                                    roll, pitch, throttle, yaw = map(float, parts[0:4])
+                                    mpu1_ax, mpu1_ay, mpu1_az = map(float, parts[4:7])
+                                    mpu1_gx, mpu1_gy, mpu1_gz = map(float, parts[7:10])
+                                    mpu2_ax, mpu2_ay, mpu2_az = map(float, parts[10:13])
+                                    mpu2_gx, mpu2_gy, mpu2_gz = map(float, parts[13:16])
+                                    
+                                    mavlink_data = {
+                                        'roll_stick': roll,
+                                        'pitch_stick': pitch,
+                                        'throttle': throttle,
+                                        'yaw_stick': yaw,
+                                        'dual_mpu': True,
+                                        'mpu1_ax': mpu1_ax, 'mpu1_ay': mpu1_ay, 'mpu1_az': mpu1_az,
+                                        'mpu1_gx': mpu1_gx, 'mpu1_gy': mpu1_gy, 'mpu1_gz': mpu1_gz,
+                                        'mpu2_ax': mpu2_ax, 'mpu2_ay': mpu2_ay, 'mpu2_az': mpu2_az,
+                                        'mpu2_gx': mpu2_gx, 'mpu2_gy': mpu2_gy, 'mpu2_gz': mpu2_gz
+                                    }
+                                    self.mavlink_received.emit(mavlink_data)
+                                    # Emit MPU1 data for visualization
+                                    self.data_received.emit(mpu1_ax, mpu1_ay, mpu1_az, mpu1_gx, mpu1_gy, mpu1_gz)
+                                except ValueError:
+                                    continue
+                            continue
                         elif line.startswith('CSV:'):
-                            # CSV format with prefix
+                            # Legacy single MPU CSV format
+                            self.dual_mpu_mode = False
                             csv_data = line[4:].strip()
                             parts = csv_data.split(',')
                             if len(parts) == 10:
@@ -205,6 +264,7 @@ class SerialReader(QThread):
                                         'pitch_stick': pitch_stick,
                                         'throttle': throttle,
                                         'yaw_stick': yaw_stick,
+                                        'dual_mpu': False,
                                         'ax': ax, 'ay': ay, 'az': az,
                                         'gx': gx, 'gy': gy, 'gz': gz
                                     }
@@ -212,10 +272,9 @@ class SerialReader(QThread):
                                     # Also emit raw sensor data for visualization
                                     self.data_received.emit(ax, ay, az, gx, gy, gz)
                                 except ValueError:
-                                    # Skip lines that can't be converted
                                     continue
                         # Skip status messages
-                        elif line.startswith(('Receiver MAC', 'Copy this MAC', 'Error', 'ESP-NOW', 'Waiting')):
+                        elif line.startswith(('Receiver MAC', 'Copy this MAC', 'Error', 'ESP-NOW', 'Waiting', 'Received wrong')):
                             continue
                     
             except Exception as e:
@@ -228,11 +287,35 @@ class SerialReader(QThread):
             # Convert hex string to bytes
             data_bytes = bytes.fromhex(hex_data)
             
-            # Expected packet structure (40 bytes):
-            # 4 floats for sticks (roll, pitch, throttle, yaw) = 16 bytes
-            # 6 floats for IMU (ax, ay, az, gx, gy, gz) = 24 bytes
-            if len(data_bytes) >= 40:
-                # Unpack data (little-endian floats)
+            # Check packet size to determine single or dual MPU
+            if len(data_bytes) >= 52:  # Dual MPU: 52 bytes (13 floats)
+                self.dual_mpu_mode = True
+                # Unpack dual MPU data (little-endian floats)
+                values = struct.unpack('<13f', data_bytes[:52])
+                roll, pitch, throttle, yaw = values[0:4]
+                mpu1_ax, mpu1_ay, mpu1_az = values[4:7]
+                mpu1_gx, mpu1_gy, mpu1_gz = values[7:10]
+                mpu2_ax, mpu2_ay, mpu2_az = values[10:13]
+                mpu2_gx, mpu2_gy, mpu2_gz = values[13:16] if len(values) >= 16 else (0, 0, 0)
+                
+                mavlink_data = {
+                    'roll_stick': roll,
+                    'pitch_stick': pitch,
+                    'throttle': throttle,
+                    'yaw_stick': yaw,
+                    'dual_mpu': True,
+                    'mpu1_ax': mpu1_ax, 'mpu1_ay': mpu1_ay, 'mpu1_az': mpu1_az,
+                    'mpu1_gx': mpu1_gx, 'mpu1_gy': mpu1_gy, 'mpu1_gz': mpu1_gz,
+                    'mpu2_ax': mpu2_ax, 'mpu2_ay': mpu2_ay, 'mpu2_az': mpu2_az,
+                    'mpu2_gx': mpu2_gx, 'mpu2_gy': mpu2_gy, 'mpu2_gz': mpu2_gz
+                }
+                self.mavlink_received.emit(mavlink_data)
+                # Emit MPU1 data for visualization
+                self.data_received.emit(mpu1_ax, mpu1_ay, mpu1_az, mpu1_gx, mpu1_gy, mpu1_gz)
+                
+            elif len(data_bytes) >= 40:  # Single MPU: 40 bytes (10 floats)
+                self.dual_mpu_mode = False
+                # Unpack single MPU data (little-endian floats)
                 values = struct.unpack('<10f', data_bytes[:40])
                 roll_stick, pitch_stick, throttle, yaw_stick, ax, ay, az, gx, gy, gz = values
                 
@@ -241,6 +324,7 @@ class SerialReader(QThread):
                     'pitch_stick': pitch_stick,
                     'throttle': throttle,
                     'yaw_stick': yaw_stick,
+                    'dual_mpu': False,
                     'ax': ax, 'ay': ay, 'az': az,
                     'gx': gx, 'gy': gy, 'gz': gz
                 }
@@ -604,6 +688,7 @@ class MainWindow(QMainWindow):
         self.serial_reader = SerialReader()
         self.is_connected = False
         self.operation_mode = 'transmitter'  # 'transmitter' or 'receiver'
+        self.dual_mpu_mode = False  # Detected from incoming data
         
         # MAVLink control values
         self.throttle = 0.0  # 0 to 1 - start at bottom
@@ -622,6 +707,7 @@ class MainWindow(QMainWindow):
         
         # Connect signals
         self.serial_reader.data_received.connect(self.on_data_received)
+        self.serial_reader.dual_data_received.connect(self.on_dual_data_received)
         self.serial_reader.mavlink_received.connect(self.on_mavlink_received)
         self.serial_reader.error_occurred.connect(self.on_error)
         
@@ -710,6 +796,17 @@ class MainWindow(QMainWindow):
         data_layout.addWidget(self.gx_label, 1, 1)
         data_layout.addWidget(self.gy_label, 1, 2)
         data_layout.addWidget(self.gz_label, 1, 3)
+        
+        # Dual MPU indicator and controls display
+        data_layout.addWidget(QLabel("Controls:"), 3, 0)
+        self.control_roll_label = QLabel("Roll: 0.00")
+        self.control_pitch_label = QLabel("Pitch: 0.00")
+        self.control_throttle_label = QLabel("Throttle: 0.00")
+        self.control_yaw_label = QLabel("Yaw: 0.00")
+        data_layout.addWidget(self.control_roll_label, 3, 1)
+        data_layout.addWidget(self.control_pitch_label, 3, 2)
+        data_layout.addWidget(self.control_throttle_label, 3, 3)
+        data_layout.addWidget(self.control_yaw_label, 4, 1)
         
         # Orientation
         data_layout.addWidget(QLabel("Orientation:"), 2, 0)
@@ -1042,7 +1139,8 @@ class MainWindow(QMainWindow):
         imu_yaw_deg = self.imu_yaw
         
         # Generate MAVLink RC_CHANNELS_OVERRIDE message format
-        mavlink_text = "=== MAVLink RC_CHANNELS_OVERRIDE ===\n"
+        mode_indicator = "🎮 DUAL MPU MODE" if self.dual_mpu_mode else "Single MPU Mode"
+        mavlink_text = f"=== MAVLink RC_CHANNELS_OVERRIDE ({mode_indicator}) ===\n"
         mavlink_text += f"Channel 1 (Roll):     {roll_pwm} µs\n"
         mavlink_text += f"Channel 2 (Pitch):    {pitch_pwm} µs\n"
         mavlink_text += f"Channel 3 (Throttle): {throttle_pwm} µs\n"
@@ -1054,18 +1152,23 @@ class MainWindow(QMainWindow):
         mavlink_text += f"Z (Throttle): {int(self.throttle * 1000):5d} (0 to +1000)\n"
         mavlink_text += f"R (Yaw):     {int(self.yaw_stick * 1000):5d} (-1000 to +1000)\n\n"
         
-        mavlink_text += "=== IMU Attitude (from MPU6050) ===\n"
-        mavlink_text += f"Roll:  {imu_roll_deg:7.2f}°\n"
-        mavlink_text += f"Pitch: {imu_pitch_deg:7.2f}°\n"
-        mavlink_text += f"Yaw:   {imu_yaw_deg:7.2f}°\n\n"
-        
-        # Calculate error for stabilization feedback
-        roll_error = self.roll_stick * 30 - imu_roll_deg  # Target ±30° max
-        pitch_error = self.pitch_stick * 30 - imu_pitch_deg
-        
-        mavlink_text += "=== Stabilization Feedback ===\n"
-        mavlink_text += f"Roll Error:  {roll_error:7.2f}° (stick target - actual)\n"
-        mavlink_text += f"Pitch Error: {pitch_error:7.2f}° (stick target - actual)\n"
+        if self.dual_mpu_mode:
+            mavlink_text += "=== Dual MPU6050 Control Mapping ===\n"
+            mavlink_text += "MPU #1 (0x68): Roll & Pitch\n"
+            mavlink_text += "MPU #2 (0x69): Throttle & Yaw\n\n"
+        else:
+            mavlink_text += "=== IMU Attitude (from MPU6050) ===\n"
+            mavlink_text += f"Roll:  {imu_roll_deg:7.2f}°\n"
+            mavlink_text += f"Pitch: {imu_pitch_deg:7.2f}°\n"
+            mavlink_text += f"Yaw:   {imu_yaw_deg:7.2f}°\n\n"
+            
+            # Calculate error for stabilization feedback
+            roll_error = self.roll_stick * 30 - imu_roll_deg  # Target ±30° max
+            pitch_error = self.pitch_stick * 30 - imu_pitch_deg
+            
+            mavlink_text += "=== Stabilization Feedback ===\n"
+            mavlink_text += f"Roll Error:  {roll_error:7.2f}° (stick target - actual)\n"
+            mavlink_text += f"Pitch Error: {pitch_error:7.2f}° (stick target - actual)\n"
         
         self.mavlink_display.setText(mavlink_text)
     
@@ -1203,7 +1306,11 @@ class MainWindow(QMainWindow):
         """Send MAVLink control data to ESP for ESP-NOW transmission."""
         try:
             if self.serial_reader.serial_port and self.serial_reader.serial_port.is_open:
-                # Pack data: 4 stick values + 6 IMU values = 10 floats
+                # Dual MPU mode doesn't need PC transmission - controls are from sensors
+                if self.dual_mpu_mode:
+                    return
+                    
+                # Pack data: 4 stick values + 6 IMU values = 10 floats (single MPU)
                 data = struct.pack('<10f', 
                     self.roll_stick, self.pitch_stick, self.throttle, self.yaw_stick,
                     ax, ay, az, gx, gy, gz)
@@ -1225,13 +1332,67 @@ class MainWindow(QMainWindow):
         self.yaw_stick = 0.0
         self.status_label.setText("Status: Orientation and throttle zeroed")
     
+    def on_dual_data_received(self, dual_data):
+        """Handle dual MPU6050 data in transmitter mode."""
+        self.dual_mpu_mode = True
+        
+        # Update window title to show dual MPU mode
+        if not self.windowTitle().endswith("- Dual MPU"):
+            self.setWindowTitle(self.windowTitle() + " - Dual MPU")
+            self.status_label.setText("Status: Connected - Dual MPU6050 Mode Active")
+        
+        # Update from hardware controls with invert settings applied
+        roll_multiplier = -1 if self.invert_roll_check.isChecked() else 1
+        pitch_multiplier = -1 if self.invert_pitch_check.isChecked() else 1
+        
+        self.roll_stick = (dual_data['roll_stick'] / 100.0) * roll_multiplier  # -100..100 to -1..1
+        self.pitch_stick = (dual_data['pitch_stick'] / 100.0) * pitch_multiplier
+        self.throttle = dual_data['throttle'] / 100.0  # 0..100 to 0..1
+        self.yaw_stick = dual_data['yaw_stick'] / 100.0
+        
+        # Update control display labels
+        self.control_roll_label.setText(f"Roll: {dual_data['roll_stick']:.1f}")
+        self.control_pitch_label.setText(f"Pitch: {dual_data['pitch_stick']:.1f}")
+        self.control_throttle_label.setText(f"Throttle: {dual_data['throttle']:.1f}")
+        self.control_yaw_label.setText(f"Yaw: {dual_data['yaw_stick']:.1f}")
+        
+        # Update joystick visualizations
+        throttle_pos = (self.throttle * 2.0) - 1.0  # 0-1 to -1-1
+        self.throttle_yaw_stick.set_position(self.yaw_stick, throttle_pos)
+        self.pitch_roll_stick.set_position(self.roll_stick, self.pitch_stick)
+        
+        # Update MPU data display (show gyro from both MPUs)
+        self.gx_label.setText(f"MPU1-GX: {dual_data['mpu1_gx']:.2f}")
+        self.gy_label.setText(f"MPU1-GY: {dual_data['mpu1_gy']:.2f}")
+        self.gz_label.setText(f"MPU2-GX: {dual_data['mpu2_gx']:.2f} (T) / GY: {dual_data['mpu2_gy']:.2f} (Y)")
+        
+        # Update MAVLink display
+        self.update_mavlink_commands()
+    
     def on_mavlink_received(self, mavlink_data):
         """Handle received MAVLink data from ESP-NOW (receiver mode)."""
+        # Check if dual MPU mode
+        is_dual = mavlink_data.get('dual_mpu', False)
+        self.dual_mpu_mode = is_dual
+        
         # Extract control values from received data
         self.roll_stick = mavlink_data['roll_stick']
         self.pitch_stick = mavlink_data['pitch_stick']
         self.throttle = mavlink_data['throttle']
         self.yaw_stick = mavlink_data['yaw_stick']
+        
+        # Normalize if dual MPU (values are -100..100, 0..100)
+        if is_dual:
+            self.roll_stick = self.roll_stick / 100.0
+            self.pitch_stick = self.pitch_stick / 100.0
+            self.throttle = self.throttle / 100.0
+            self.yaw_stick = self.yaw_stick / 100.0
+            
+            # Update control display
+            self.control_roll_label.setText(f"Roll: {mavlink_data['roll_stick']:.1f}")
+            self.control_pitch_label.setText(f"Pitch: {mavlink_data['pitch_stick']:.1f}")
+            self.control_throttle_label.setText(f"Throttle: {mavlink_data['throttle']:.1f}")
+            self.control_yaw_label.setText(f"Yaw: {mavlink_data['yaw_stick']:.1f}")
         
         # Update joystick visualizations to match received data
         throttle_pos = (self.throttle * 2.0) - 1.0  # 0-1 to -1-1

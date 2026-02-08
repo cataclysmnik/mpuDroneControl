@@ -1,16 +1,23 @@
 /*
- * Combined MPU6050 + ESP-NOW Transmitter
+ * Dual MPU6050 + ESP-NOW Transmitter
  *
- * This sketch combines MPU6050 reading and ESP-NOW transmission in one ESP32.
- * Useful for a standalone transmitter that doesn't need a separate Arduino.
+ * This sketch reads TWO MPU6050 sensors and sends dual-control data via ESP-NOW
+ *
+ * MPU #1 (I2C Address 0x68) - Roll & Pitch Control
+ *   - Tilt around X-axis → Roll (orientation angle)
+ *   - Tilt around Y-axis → Pitch (orientation angle)
+ *
+ * MPU #2 (I2C Address 0x69) - Throttle & Yaw Control
+ *   - Tilt around Y-axis → Throttle (orientation angle)
+ *   - Tilt around X-axis → Yaw (orientation angle)
  *
  * Hardware:
  * - ESP32
- * - MPU6050 (I2C: SDA=GPIO21, SCL=GPIO22)
+ * - MPU6050 #1 (AD0 LOW → 0x68) for Roll/Pitch
+ * - MPU6050 #2 (AD0 HIGH → 0x69) for Throttle/Yaw
+ * - Both share I2C: SDA=GPIO21, SCL=GPIO22
  *
- * This can work in two modes:
- * 1. Standalone: Reads MPU6050, processes data, and sends via ESP-NOW
- * 2. With PC: Also sends data to PC for visualization
+ * See connection diagram at end of file
  */
 
 #include <Wire.h>
@@ -19,30 +26,45 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-// MPU6050 object
-Adafruit_MPU6050 mpu;
+// Two MPU6050 objects with different I2C addresses
+Adafruit_MPU6050 mpu1; // 0x68 - Roll & Pitch
+Adafruit_MPU6050 mpu2; // 0x69 - Throttle & Yaw
 
 // Receiver ESP MAC Address - CHANGE THIS
 uint8_t receiverMAC[] = {0xC0, 0xCD, 0xD6, 0x8D, 0xAB, 0x1C};
 
-// Data structure for MAVLink control data
+// Data structure for dual control data
 typedef struct
 {
-    float roll_stick;
-    float pitch_stick;
-    float throttle;
-    float yaw_stick;
-    float ax, ay, az;
-    float gx, gy, gz;
-} MavlinkData;
+    float roll_stick;                // From MPU1 X-axis (roll angle)
+    float pitch_stick;               // From MPU1 Y-axis (pitch angle)
+    float throttle;                  // From MPU2 Y-axis (pitch angle)
+    float yaw_stick;                 // From MPU2 X-axis (roll angle)
+    float mpu1_ax, mpu1_ay, mpu1_az; // MPU1 accelerometer
+    float mpu1_gx, mpu1_gy, mpu1_gz; // MPU1 gyroscope
+    float mpu2_ax, mpu2_ay, mpu2_az; // MPU2 accelerometer
+    float mpu2_gx, mpu2_gy, mpu2_gz; // MPU2 gyroscope
+} DualControlData;
 
-MavlinkData txData;
+DualControlData txData;
 esp_now_peer_info_t peerInfo;
 
 // Configuration
 #define SEND_TO_PC true     // Set false if no PC connection needed
 #define SEND_TO_ESPNOW true // Set false to disable ESP-NOW
-#define UPDATE_RATE_MS 10   // ~100Hz update rate
+#define UPDATE_RATE_MS 20   // ~50Hz update rate (reduced for dual sensor)
+
+// Calibration offsets (not needed for orientation-based control)
+// These could be used for accelerometer calibration if needed
+
+// Control mapping ranges (adjust these to your preference)
+// These scales map tilt angles (in degrees) to control values
+#define ROLL_SCALE 2.0     // degrees of tilt to control units
+#define PITCH_SCALE 2.0    // degrees of tilt to control units
+#define THROTTLE_SCALE 2.0 // degrees of tilt to control units
+#define YAW_SCALE 2.0      // degrees of tilt to control units
+
+#define MAX_TILT_ANGLE 50.0 // Maximum tilt angle in degrees for full control
 
 unsigned long lastUpdate = 0;
 
@@ -61,29 +83,60 @@ void OnDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status)
     }
 }
 
+// Helper function to calculate roll angle from accelerometer
+float calculateRoll(float ay, float az)
+{
+    return atan2(ay, az) * 180.0 / PI;
+}
+
+// Helper function to calculate pitch angle from accelerometer
+float calculatePitch(float ax, float ay, float az)
+{
+    return atan2(-ax, sqrt(ay * ay + az * az)) * 180.0 / PI;
+}
+
 void setup()
 {
     Serial.begin(115200);
+    delay(1500); // Allow MPUs to boot
 
-    delay(1500); // Allow MPU to boot
-    Wire.begin(21, 22);
-    Wire.setClock(100000);
+    // Initialize I2C
+    Wire.begin(21, 22);    // SDA=21, SCL=22
+    Wire.setClock(400000); // 400kHz I2C speed
 
-    // Initialize MPU6050
-    Serial.println("Initializing MPU6050...");
-
-    while (!mpu.begin())
+    // Initialize MPU6050 #1 (0x68) - Roll & Pitch
+    Serial.println("Initializing MPU6050 #1 (0x68 - Roll/Pitch)...");
+    if (!mpu1.begin(0x68, &Wire))
     {
-        Serial.println("MPU6050 connection failed! Retrying...");
-        delay(200);
+        Serial.println("Failed to find MPU #1 at 0x68!");
+        Serial.println("Check wiring and AD0 pin (must be LOW/GND)");
+        while (1)
+        {
+            delay(1000);
+        }
     }
 
-    // Configure MPU6050
-    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+    mpu1.setAccelerometerRange(MPU6050_RANGE_4_G);
+    mpu1.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu1.setFilterBandwidth(MPU6050_BAND_21_HZ);
+    Serial.println("MPU6050 #1 OK");
 
-    Serial.println("MPU6050 OK");
+    // Initialize MPU6050 #2 (0x69) - Throttle & Yaw
+    Serial.println("Initializing MPU6050 #2 (0x69 - Throttle/Yaw)...");
+    if (!mpu2.begin(0x69, &Wire))
+    {
+        Serial.println("Failed to find MPU #2 at 0x69!");
+        Serial.println("Check wiring and AD0 pin (must be HIGH/3.3V)");
+        while (1)
+        {
+            delay(1000);
+        }
+    }
+
+    mpu2.setAccelerometerRange(MPU6050_RANGE_4_G);
+    mpu2.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu2.setFilterBandwidth(MPU6050_BAND_21_HZ);
+    Serial.println("MPU6050 #2 OK");
 
     if (SEND_TO_ESPNOW)
     {
@@ -116,7 +169,10 @@ void setup()
         Serial.println("ESP-NOW Ready");
     }
 
-    Serial.println("System Ready");
+    Serial.println("\n=== DUAL MPU6050 SYSTEM READY ===");
+    Serial.println("MPU1 (0x68): Roll & Pitch");
+    Serial.println("MPU2 (0x69): Throttle & Yaw");
+    Serial.println("================================\n");
 }
 
 void loop()
@@ -127,60 +183,141 @@ void loop()
     {
         lastUpdate = currentTime;
 
-        // Read MPU6050
-        sensors_event_t accel, gyro, temp;
-        mpu.getEvent(&accel, &gyro, &temp);
+        // Read both MPU6050 sensors
+        sensors_event_t accel1, gyro1, temp1;
+        sensors_event_t accel2, gyro2, temp2;
 
-        // Extract values (Adafruit library returns in m/s² and rad/s)
-        float accelX = accel.acceleration.x;
-        float accelY = accel.acceleration.y;
-        float accelZ = accel.acceleration.z;
-        float gyroX = gyro.gyro.x;
-        float gyroY = gyro.gyro.y;
-        float gyroZ = gyro.gyro.z;
+        mpu1.getEvent(&accel1, &gyro1, &temp1);
+        mpu2.getEvent(&accel2, &gyro2, &temp2);
 
+        // Store raw accelerometer and gyro data for telemetry
+        txData.mpu1_ax = accel1.acceleration.x;
+        txData.mpu1_ay = accel1.acceleration.y;
+        txData.mpu1_az = accel1.acceleration.z;
+        txData.mpu1_gx = gyro1.gyro.x;
+        txData.mpu1_gy = gyro1.gyro.y;
+        txData.mpu1_gz = gyro1.gyro.z;
+
+        txData.mpu2_ax = accel2.acceleration.x;
+        txData.mpu2_ay = accel2.acceleration.y;
+        txData.mpu2_az = accel2.acceleration.z;
+        txData.mpu2_gx = gyro2.gyro.x;
+        txData.mpu2_gy = gyro2.gyro.y;
+        txData.mpu2_gz = gyro2.gyro.z;
+
+        // MPU1 Control Mapping (Roll & Pitch) - Based on Orientation
+        // Calculate roll from accelerometer (tilt around X-axis)
+        float roll_angle = calculateRoll(accel1.acceleration.y, accel1.acceleration.z);
+        txData.roll_stick = constrain(roll_angle * ROLL_SCALE, -100.0, 100.0);
+
+        // Calculate pitch from accelerometer (tilt around Y-axis)
+        float pitch_angle = calculatePitch(accel1.acceleration.x, accel1.acceleration.y, accel1.acceleration.z);
+        txData.pitch_stick = constrain(pitch_angle * PITCH_SCALE, -100.0, 100.0);
+
+        // MPU2 Control Mapping (Throttle & Yaw) - Based on Orientation
+        // Calculate throttle from tilt angle (0-100 range) - using pitch axis
+        float throttle_angle = calculatePitch(accel2.acceleration.x, accel2.acceleration.y, accel2.acceleration.z);
+        txData.throttle = constrain(50.0 + (throttle_angle * THROTTLE_SCALE), 0.0, 100.0);
+
+        // Calculate yaw from tilt angle - using roll axis
+        float yaw_angle = calculateRoll(accel2.acceleration.y, accel2.acceleration.z);
+        txData.yaw_stick = constrain(yaw_angle * YAW_SCALE, -100.0, 100.0);
+
+        // Send data to PC for monitoring (CSV format)
         if (SEND_TO_PC)
         {
-            // Send CSV format to PC for Python app (transmitter mode)
-            Serial.print(accelX);
+            Serial.print("DUAL:");
+            Serial.print(txData.roll_stick);
             Serial.print(",");
-            Serial.print(accelY);
+            Serial.print(txData.pitch_stick);
             Serial.print(",");
-            Serial.print(accelZ);
+            Serial.print(txData.throttle);
             Serial.print(",");
-            Serial.print(gyroX);
+            Serial.print(txData.yaw_stick);
             Serial.print(",");
-            Serial.print(gyroY);
+            // MPU1 raw data
+            Serial.print(txData.mpu1_gx);
             Serial.print(",");
-            Serial.println(gyroZ);
+            Serial.print(txData.mpu1_gy);
+            Serial.print(",");
+            Serial.print(txData.mpu1_gz);
+            Serial.print(",");
+            // MPU2 raw data
+            Serial.print(txData.mpu2_gx);
+            Serial.print(",");
+            Serial.print(txData.mpu2_gy);
+            Serial.print(",");
+            Serial.println(txData.mpu2_gz);
         }
 
-        // Check for control data from PC (if connected)
-        if (Serial.available())
+        // Send via ESP-NOW
+        if (SEND_TO_ESPNOW)
         {
-            String line = Serial.readStringUntil('\n');
-            line.trim();
+            esp_err_t result = esp_now_send(receiverMAC, (uint8_t *)&txData, sizeof(DualControlData));
 
-            if (line.startsWith("SEND:"))
+            if (result != ESP_OK && SEND_TO_PC)
             {
-                // Received MAVLink data from PC to transmit via ESP-NOW
-                String hexData = line.substring(5);
-
-                if (hexData.length() == 80 && SEND_TO_ESPNOW)
-                {
-                    uint8_t buffer[40];
-                    for (int i = 0; i < 40; i++)
-                    {
-                        String byteStr = hexData.substring(i * 2, i * 2 + 2);
-                        buffer[i] = (uint8_t)strtol(byteStr.c_str(), NULL, 16);
-                    }
-
-                    memcpy(&txData, buffer, sizeof(MavlinkData));
-
-                    // Send via ESP-NOW
-                    esp_now_send(receiverMAC, (uint8_t *)&txData, sizeof(MavlinkData));
-                }
+                Serial.println("ESP-NOW send error");
             }
         }
     }
 }
+
+/*
+ * ============================================
+ * WIRING DIAGRAM FOR DUAL MPU6050 SETUP
+ * ============================================
+ *
+ * ESP32 Pinout:
+ * GPIO21 → SDA (shared by both MPUs)
+ * GPIO22 → SCL (shared by both MPUs)
+ * 3.3V   → VCC (both MPUs)
+ * GND    → GND (both MPUs)
+ *
+ * MPU6050 #1 (Roll & Pitch) - Address 0x68:
+ * ┌─────────────────┐
+ * │  MPU6050 #1     │
+ * ├─────────────────┤
+ * │ VCC  → 3.3V     │
+ * │ GND  → GND      │
+ * │ SCL  → GPIO22   │
+ * │ SDA  → GPIO21   │
+ * │ AD0  → GND      │ ← CRITICAL: AD0 to GND for 0x68
+ * │ INT  → (unused) │
+ * └─────────────────┘
+ *
+ * MPU6050 #2 (Throttle & Yaw) - Address 0x69:
+ * ┌─────────────────┐
+ * │  MPU6050 #2     │
+ * ├─────────────────┤
+ * │ VCC  → 3.3V     │
+ * │ GND  → GND      │
+ * │ SCL  → GPIO22   │
+ * │ SDA  → GPIO21   │
+ * │ AD0  → 3.3V     │ ← CRITICAL: AD0 to 3.3V for 0x69
+ * │ INT  → (unused) │
+ * └─────────────────┘
+ *
+ * Connection Summary:
+ * - Both MPUs share the same I2C bus (SDA & SCL)
+ * - MPU1: AD0 pin connected to GND → I2C address 0x68
+ * - MPU2: AD0 pin connected to 3.3V → I2C address 0x69
+ * - This allows both sensors to work on the same bus
+ *
+ * Physical Layout Recommendation:
+ * - Mount MPU1 on the right grip (for roll/pitch control)
+ * - Mount MPU2 on the left grip (for throttle/yaw control)
+ * - Keep wires short to minimize noise
+ * - Use 4.7kΩ pull-up resistors on SDA/SCL if having connection issues
+ *
+ * Control Mapping:
+ * MPU1 (Right Grip):
+ *   - Tilt left/right → Roll (orientation angle)
+ *   - Tilt forward/back → Pitch (orientation angle)
+ *
+ * MPU2 (Left Grip):
+ *   - Tilt forward/back → Throttle (orientation angle)
+ *   - Tilt left/right → Yaw (orientation angle)
+ *
+ * ============================================
+ */
