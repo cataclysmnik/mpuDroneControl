@@ -490,6 +490,12 @@ class MainWindow(QMainWindow):
         self.dual_throttle_offset = 0.0
         self.dual_yaw_offset = 0.0
         
+        # Raw received values for receiver mode (before offsets applied)
+        self.rx_raw_roll = 0.0
+        self.rx_raw_pitch = 0.0
+        self.rx_raw_throttle = 0.0
+        self.rx_raw_yaw = 0.0
+        
         # Connect signals
         self.serial_reader.data_received.connect(self.on_data_received)
         self.serial_reader.dual_data_received.connect(self.on_dual_data_received)
@@ -1098,11 +1104,20 @@ class MainWindow(QMainWindow):
     def zero_orientation(self):
         """Zero/level the current orientation."""
         if self.dual_mpu_mode:
-            # In dual MPU mode, store current smoothed values as offsets
-            self.dual_roll_offset = self.smoothed_roll
-            self.dual_pitch_offset = self.smoothed_pitch
-            self.dual_throttle_offset = self.smoothed_throttle
-            self.dual_yaw_offset = self.smoothed_yaw
+            # In dual MPU mode, store current values as offsets
+            if self.operation_mode == 'transmitter':
+                # Transmitter: use smoothed values (in -100..100 / 0..100 range)
+                self.dual_roll_offset = self.smoothed_roll
+                self.dual_pitch_offset = self.smoothed_pitch
+                self.dual_throttle_offset = self.smoothed_throttle
+                self.dual_yaw_offset = self.smoothed_yaw
+            else:
+                # Receiver: use raw received values before offsets (in -1..1 / 0..1 range)
+                # Convert to -100..100 / 0..100 range for consistency
+                self.dual_roll_offset = self.rx_raw_roll * 100.0
+                self.dual_pitch_offset = self.rx_raw_pitch * 100.0
+                self.dual_throttle_offset = self.rx_raw_throttle * 100.0
+                self.dual_yaw_offset = self.rx_raw_yaw * 100.0
             self.status_label.setText("Status: Dual MPU zero point set")
         else:
             # In single MPU mode, use sensor fusion zeroing
@@ -1182,18 +1197,30 @@ class MainWindow(QMainWindow):
         is_dual = mavlink_data.get('dual_mpu', False)
         self.dual_mpu_mode = is_dual
         
-        # Extract control values from received data
-        self.roll_stick = mavlink_data['roll_stick']
-        self.pitch_stick = mavlink_data['pitch_stick']
-        self.throttle = mavlink_data['throttle']
-        self.yaw_stick = mavlink_data['yaw_stick']
+        # Extract control values from received data (raw, before offsets)
+        raw_roll = mavlink_data['roll_stick']
+        raw_pitch = mavlink_data['pitch_stick']
+        raw_throttle = mavlink_data['throttle']
+        raw_yaw = mavlink_data['yaw_stick']
         
         # Normalize if dual MPU (values are -100..100, 0..100)
         if is_dual:
-            self.roll_stick = self.roll_stick / 100.0
-            self.pitch_stick = self.pitch_stick / 100.0
-            self.throttle = self.throttle / 100.0
-            self.yaw_stick = self.yaw_stick / 100.0
+            raw_roll = raw_roll / 100.0
+            raw_pitch = raw_pitch / 100.0
+            raw_throttle = raw_throttle / 100.0
+            raw_yaw = raw_yaw / 100.0
+        
+        # Store raw values for zero calibration (needed by zero_orientation)
+        self.rx_raw_roll = raw_roll
+        self.rx_raw_pitch = raw_pitch
+        self.rx_raw_throttle = raw_throttle
+        self.rx_raw_yaw = raw_yaw
+        
+        # Apply zero/level offsets in receiver mode (so receiver can independently zero)
+        self.roll_stick = raw_roll - (self.dual_roll_offset / 100.0 if is_dual else self.dual_roll_offset)
+        self.pitch_stick = raw_pitch - (self.dual_pitch_offset / 100.0 if is_dual else self.dual_pitch_offset)
+        self.throttle = max(0.0, raw_throttle - (self.dual_throttle_offset / 100.0 if is_dual else self.dual_throttle_offset))
+        self.yaw_stick = raw_yaw - (self.dual_yaw_offset / 100.0 if is_dual else self.dual_yaw_offset)
         
         # Apply invert settings in receiver mode
         roll_multiplier = -1 if self.invert_roll_check.isChecked() else 1
@@ -1202,12 +1229,12 @@ class MainWindow(QMainWindow):
         self.roll_stick = self.roll_stick * roll_multiplier
         self.pitch_stick = self.pitch_stick * pitch_multiplier
         
-        # Update control display (show inverted values)
+        # Update control display (show offset-adjusted and inverted values)
         if is_dual:
             self.control_roll_label.setText(f"Roll: {self.roll_stick * 100.0:.1f}")
             self.control_pitch_label.setText(f"Pitch: {self.pitch_stick * 100.0:.1f}")
-            self.control_throttle_label.setText(f"Throttle: {mavlink_data['throttle']:.1f}")
-            self.control_yaw_label.setText(f"Yaw: {mavlink_data['yaw_stick']:.1f}")
+            self.control_throttle_label.setText(f"Throttle: {self.throttle * 100.0:.1f}")
+            self.control_yaw_label.setText(f"Yaw: {self.yaw_stick * 100.0:.1f}")
         
         # Update joystick visualizations to match received data
         throttle_pos = (self.throttle * 2.0) - 1.0  # 0-1 to -1-1
