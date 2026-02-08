@@ -281,6 +281,18 @@ class SerialReader(QThread):
     def _parse_espnow_packet(self, hex_data):
         """Parse ESP-NOW hex packet containing MAVLink data."""
         try:
+            # Validate hex data is not empty and contains only valid hex characters
+            if not hex_data or not hex_data.strip():
+                return
+            
+            # Remove any whitespace
+            hex_data = hex_data.strip()
+            
+            # Validate that it contains only valid hex characters
+            if not all(c in '0123456789ABCDEFabcdef' for c in hex_data):
+                self.error_occurred.emit(f"ESP-NOW parse error: non-hexadecimal characters in data: {hex_data[:50]}")
+                return
+            
             # Convert hex string to bytes
             data_bytes = bytes.fromhex(hex_data)
             
@@ -328,6 +340,12 @@ class SerialReader(QThread):
                 self.mavlink_received.emit(mavlink_data)
                 # Also emit raw sensor data for visualization
                 self.data_received.emit(ax, ay, az, gx, gy, gz)
+        except ValueError as e:
+            # Catch specific hex parsing errors
+            self.error_occurred.emit(f"ESP-NOW parse error: {str(e)}")
+        except struct.error as e:
+            # Catch struct unpacking errors (wrong data size)
+            pass  # Silently skip - data size mismatch
         except Exception as e:
             self.error_occurred.emit(f"ESP-NOW parse error: {str(e)}")
 
@@ -703,7 +721,7 @@ class MainWindow(QMainWindow):
         
         joystick_layout.addLayout(self.deadzone_layout)
         
-        # Invert controls in separate row (only for transmitter)
+        # Invert controls (functional in both transmitter and receiver modes)
         self.invert_layout = QHBoxLayout()
         from PySide6.QtWidgets import QCheckBox
         self.invert_roll_check = QCheckBox("Invert Roll")
@@ -775,10 +793,12 @@ class MainWindow(QMainWindow):
             if widget:
                 widget.setVisible(show)
                 
-        for i in range(self.invert_layout.count()):
-            widget = self.invert_layout.itemAt(i).widget()
-            if widget:
-                widget.setVisible(show)
+        # Note: Invert controls are now always visible since they work in both transmitter and receiver modes
+        # Keeping this code for potential future use
+        # for i in range(self.invert_layout.count()):
+        #     widget = self.invert_layout.itemAt(i).widget()
+        #     if widget:
+        #         widget.setVisible(show)
             
     def refresh_ports(self):
         """Refresh the list of available COM ports."""
@@ -1187,10 +1207,18 @@ class MainWindow(QMainWindow):
             self.pitch_stick = self.pitch_stick / 100.0
             self.throttle = self.throttle / 100.0
             self.yaw_stick = self.yaw_stick / 100.0
-            
-            # Update control display
-            self.control_roll_label.setText(f"Roll: {mavlink_data['roll_stick']:.1f}")
-            self.control_pitch_label.setText(f"Pitch: {mavlink_data['pitch_stick']:.1f}")
+        
+        # Apply invert settings in receiver mode
+        roll_multiplier = -1 if self.invert_roll_check.isChecked() else 1
+        pitch_multiplier = -1 if self.invert_pitch_check.isChecked() else 1
+        
+        self.roll_stick = self.roll_stick * roll_multiplier
+        self.pitch_stick = self.pitch_stick * pitch_multiplier
+        
+        # Update control display (show inverted values)
+        if is_dual:
+            self.control_roll_label.setText(f"Roll: {self.roll_stick * 100.0:.1f}")
+            self.control_pitch_label.setText(f"Pitch: {self.pitch_stick * 100.0:.1f}")
             self.control_throttle_label.setText(f"Throttle: {mavlink_data['throttle']:.1f}")
             self.control_yaw_label.setText(f"Yaw: {mavlink_data['yaw_stick']:.1f}")
         
