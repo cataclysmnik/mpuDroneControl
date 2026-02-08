@@ -8,7 +8,7 @@
  *   - Tilt around Y-axis → Pitch (orientation angle)
  *
  * MPU #2 (I2C Address 0x69) - Throttle & Yaw Control
- *   - Tilt around Y-axis → Throttle (orientation angle)
+ *   - Tilt around Y-axis → Throttle (0% at level, increases with forward tilt)
  *   - Tilt around X-axis → Yaw (orientation angle)
  *
  * Hardware:
@@ -59,12 +59,21 @@ esp_now_peer_info_t peerInfo;
 
 // Control mapping ranges (adjust these to your preference)
 // These scales map tilt angles (in degrees) to control values
-#define ROLL_SCALE 2.0     // degrees of tilt to control units
-#define PITCH_SCALE 2.0    // degrees of tilt to control units
-#define THROTTLE_SCALE 2.0 // degrees of tilt to control units
-#define YAW_SCALE 2.0      // degrees of tilt to control units
+#define ROLL_SCALE 2.0      // degrees of tilt to control units
+#define PITCH_SCALE 2.0     // degrees of tilt to control units
+#define THROTTLE_SCALE 3.33 // degrees of tilt to control units (30° = 100%)
+#define YAW_SCALE 2.0       // degrees of tilt to control units
 
 #define MAX_TILT_ANGLE 50.0 // Maximum tilt angle in degrees for full control
+
+// Smoothing configuration
+#define SMOOTHING_FACTOR 0.15 // Lower = more smoothing (0.0-1.0), 0.15 provides good balance
+
+// Smoothed values for control outputs
+float smoothed_roll = 0.0;
+float smoothed_pitch = 0.0;
+float smoothed_throttle = 0.0; // Start at zero throttle (level condition)
+float smoothed_yaw = 0.0;
 
 unsigned long lastUpdate = 0;
 
@@ -93,6 +102,12 @@ float calculateRoll(float ay, float az)
 float calculatePitch(float ax, float ay, float az)
 {
     return atan2(-ax, sqrt(ay * ay + az * az)) * 180.0 / PI;
+}
+
+// Exponential Moving Average smoothing function
+float smoothValue(float current_value, float previous_smoothed, float alpha)
+{
+    return (alpha * current_value) + ((1.0 - alpha) * previous_smoothed);
 }
 
 void setup()
@@ -208,20 +223,29 @@ void loop()
         // MPU1 Control Mapping (Roll & Pitch) - Based on Orientation
         // Calculate roll from accelerometer (tilt around X-axis)
         float roll_angle = calculateRoll(accel1.acceleration.y, accel1.acceleration.z);
-        txData.roll_stick = constrain(roll_angle * ROLL_SCALE, -100.0, 100.0);
+        float roll_raw = constrain(roll_angle * ROLL_SCALE, -100.0, 100.0);
+        smoothed_roll = smoothValue(roll_raw, smoothed_roll, SMOOTHING_FACTOR);
+        txData.roll_stick = smoothed_roll;
 
         // Calculate pitch from accelerometer (tilt around Y-axis)
         float pitch_angle = calculatePitch(accel1.acceleration.x, accel1.acceleration.y, accel1.acceleration.z);
-        txData.pitch_stick = constrain(pitch_angle * PITCH_SCALE, -100.0, 100.0);
+        float pitch_raw = constrain(pitch_angle * PITCH_SCALE, -100.0, 100.0);
+        smoothed_pitch = smoothValue(pitch_raw, smoothed_pitch, SMOOTHING_FACTOR);
+        txData.pitch_stick = smoothed_pitch;
 
         // MPU2 Control Mapping (Throttle & Yaw) - Based on Orientation
         // Calculate throttle from tilt angle (0-100 range) - using pitch axis
+        // Level = 0%, tilted forward = higher throttle (0-100%)
         float throttle_angle = calculatePitch(accel2.acceleration.x, accel2.acceleration.y, accel2.acceleration.z);
-        txData.throttle = constrain(50.0 + (throttle_angle * THROTTLE_SCALE), 0.0, 100.0);
+        float throttle_raw = constrain(throttle_angle * THROTTLE_SCALE, 0.0, 100.0);
+        smoothed_throttle = smoothValue(throttle_raw, smoothed_throttle, SMOOTHING_FACTOR);
+        txData.throttle = smoothed_throttle;
 
         // Calculate yaw from tilt angle - using roll axis
         float yaw_angle = calculateRoll(accel2.acceleration.y, accel2.acceleration.z);
-        txData.yaw_stick = constrain(yaw_angle * YAW_SCALE, -100.0, 100.0);
+        float yaw_raw = constrain(yaw_angle * YAW_SCALE, -100.0, 100.0);
+        smoothed_yaw = smoothValue(yaw_raw, smoothed_yaw, SMOOTHING_FACTOR);
+        txData.yaw_stick = smoothed_yaw;
 
         // Send data to PC for monitoring (CSV format)
         if (SEND_TO_PC)
@@ -316,7 +340,7 @@ void loop()
  *   - Tilt forward/back → Pitch (orientation angle)
  *
  * MPU2 (Left Grip):
- *   - Tilt forward/back → Throttle (orientation angle)
+ *   - Tilt forward/back → Throttle (0% at level, 100% at ~30° forward)
  *   - Tilt left/right → Yaw (orientation angle)
  *
  * ============================================

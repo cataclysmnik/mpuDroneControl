@@ -5,9 +5,6 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QGroupBox, QGridLayout, QTextEdit, QRadioButton, QButtonGroup)
 from PySide6.QtCore import QTimer, Signal, QThread, Qt, QPointF
 from PySide6.QtGui import QFont, QPainter, QColor, QPen, QBrush
-from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from OpenGL.GL import *
-from OpenGL.GLU import *
 import serial
 import serial.tools.list_ports
 import time
@@ -444,237 +441,6 @@ class VirtualJoystick(QWidget):
         # Don't emit signal to avoid circular updates
 
 
-class OpenGLWidget(QOpenGLWidget):
-    """OpenGL widget for 3D visualization of MPU6050 orientation."""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.roll = 0.0
-        self.pitch = 0.0
-        self.yaw = 0.0
-        
-    def initializeGL(self):
-        """Initialize OpenGL settings."""
-        glEnable(GL_DEPTH_TEST)
-        glEnable(GL_LIGHTING)
-        glEnable(GL_LIGHT0)
-        glEnable(GL_COLOR_MATERIAL)
-        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
-        
-        # Set up light
-        glLightfv(GL_LIGHT0, GL_POSITION, [1.0, 1.0, 1.0, 0.0])
-        glLightfv(GL_LIGHT0, GL_AMBIENT, [0.3, 0.3, 0.3, 1.0])
-        glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.8, 0.8, 0.8, 1.0])
-        
-        glClearColor(0.1, 0.1, 0.15, 1.0)
-        
-    def resizeGL(self, w, h):
-        """Handle window resize."""
-        glViewport(0, 0, w, h)
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        gluPerspective(45.0, w / h if h > 0 else 1, 0.1, 100.0)
-        glMatrixMode(GL_MODELVIEW)
-        
-    def paintGL(self):
-        """Render the 3D scene."""
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        glLoadIdentity()
-        
-        # Position camera
-        glTranslatef(0.0, 0.0, -6.0)
-        
-        # Draw ground plane (before rotation)
-        self.draw_ground_plane()
-        
-        # Apply rotations (in order: yaw, pitch, roll)
-        glRotatef(self.yaw, 0.0, 1.0, 0.0)
-        glRotatef(self.pitch, 1.0, 0.0, 0.0)
-        glRotatef(self.roll, 0.0, 0.0, 1.0)
-        
-        # Draw MPU6050 board representation
-        self.draw_board()
-        
-        # Draw axis indicators
-        self.draw_axes()
-        
-    def draw_board(self):
-        """Draw a rectangular board representing the MPU6050."""
-        # Main board (blue-ish)
-        glColor3f(0.2, 0.4, 0.8)
-        glBegin(GL_QUADS)
-        
-        # Top face
-        glNormal3f(0.0, 1.0, 0.0)
-        glVertex3f(-1.5, 0.1, -1.0)
-        glVertex3f(1.5, 0.1, -1.0)
-        glVertex3f(1.5, 0.1, 1.0)
-        glVertex3f(-1.5, 0.1, 1.0)
-        
-        # Bottom face
-        glNormal3f(0.0, -1.0, 0.0)
-        glVertex3f(-1.5, -0.1, -1.0)
-        glVertex3f(-1.5, -0.1, 1.0)
-        glVertex3f(1.5, -0.1, 1.0)
-        glVertex3f(1.5, -0.1, -1.0)
-        
-        glEnd()
-        
-        # Sides
-        glColor3f(0.15, 0.3, 0.6)
-        glBegin(GL_QUADS)
-        
-        # Front
-        glNormal3f(0.0, 0.0, 1.0)
-        glVertex3f(-1.5, -0.1, 1.0)
-        glVertex3f(-1.5, 0.1, 1.0)
-        glVertex3f(1.5, 0.1, 1.0)
-        glVertex3f(1.5, -0.1, 1.0)
-        
-        # Back
-        glNormal3f(0.0, 0.0, -1.0)
-        glVertex3f(-1.5, -0.1, -1.0)
-        glVertex3f(1.5, -0.1, -1.0)
-        glVertex3f(1.5, 0.1, -1.0)
-        glVertex3f(-1.5, 0.1, -1.0)
-        
-        # Left
-        glNormal3f(-1.0, 0.0, 0.0)
-        glVertex3f(-1.5, -0.1, -1.0)
-        glVertex3f(-1.5, 0.1, -1.0)
-        glVertex3f(-1.5, 0.1, 1.0)
-        glVertex3f(-1.5, -0.1, 1.0)
-        
-        # Right
-        glNormal3f(1.0, 0.0, 0.0)
-        glVertex3f(1.5, -0.1, -1.0)
-        glVertex3f(1.5, -0.1, 1.0)
-        glVertex3f(1.5, 0.1, 1.0)
-        glVertex3f(1.5, 0.1, -1.0)
-        
-        glEnd()
-        
-        # Draw a small chip on top
-        glColor3f(0.1, 0.1, 0.1)
-        glPushMatrix()
-        glTranslatef(0.0, 0.15, 0.0)
-        glScalef(0.5, 0.05, 0.4)
-        self.draw_cube()
-        glPopMatrix()
-        
-    def draw_cube(self):
-        """Draw a simple cube."""
-        glBegin(GL_QUADS)
-        
-        # Front
-        glVertex3f(-1, -1, 1)
-        glVertex3f(1, -1, 1)
-        glVertex3f(1, 1, 1)
-        glVertex3f(-1, 1, 1)
-        
-        # Back
-        glVertex3f(-1, -1, -1)
-        glVertex3f(-1, 1, -1)
-        glVertex3f(1, 1, -1)
-        glVertex3f(1, -1, -1)
-        
-        # Top
-        glVertex3f(-1, 1, -1)
-        glVertex3f(-1, 1, 1)
-        glVertex3f(1, 1, 1)
-        glVertex3f(1, 1, -1)
-        
-        # Bottom
-        glVertex3f(-1, -1, -1)
-        glVertex3f(1, -1, -1)
-        glVertex3f(1, -1, 1)
-        glVertex3f(-1, -1, 1)
-        
-        # Right
-        glVertex3f(1, -1, -1)
-        glVertex3f(1, 1, -1)
-        glVertex3f(1, 1, 1)
-        glVertex3f(1, -1, 1)
-        
-        # Left
-        glVertex3f(-1, -1, -1)
-        glVertex3f(-1, -1, 1)
-        glVertex3f(-1, 1, 1)
-        glVertex3f(-1, 1, -1)
-        
-        glEnd()
-        
-    def draw_ground_plane(self):
-        """Draw a ground plane for reference."""
-        glDisable(GL_LIGHTING)
-        glLineWidth(1.0)
-        
-        # Draw grid
-        glColor3f(0.3, 0.3, 0.3)
-        glBegin(GL_LINES)
-        
-        grid_size = 10
-        grid_step = 1.0
-        
-        for i in range(-grid_size, grid_size + 1):
-            pos = i * grid_step
-            # Lines parallel to X axis
-            glVertex3f(-grid_size * grid_step, -2.5, pos)
-            glVertex3f(grid_size * grid_step, -2.5, pos)
-            # Lines parallel to Z axis
-            glVertex3f(pos, -2.5, -grid_size * grid_step)
-            glVertex3f(pos, -2.5, grid_size * grid_step)
-        
-        glEnd()
-        
-        # Draw horizon reference lines (brighter)
-        glColor3f(0.5, 0.5, 0.5)
-        glLineWidth(2.0)
-        glBegin(GL_LINES)
-        # X axis on ground
-        glVertex3f(-grid_size * grid_step, -2.5, 0)
-        glVertex3f(grid_size * grid_step, -2.5, 0)
-        # Z axis on ground
-        glVertex3f(0, -2.5, -grid_size * grid_step)
-        glVertex3f(0, -2.5, grid_size * grid_step)
-        glEnd()
-        
-        glEnable(GL_LIGHTING)
-        glLineWidth(1.0)
-    
-    def draw_axes(self):
-        """Draw coordinate axes."""
-        glDisable(GL_LIGHTING)
-        glLineWidth(3.0)
-        glBegin(GL_LINES)
-        
-        # X axis (Red)
-        glColor3f(1.0, 0.0, 0.0)
-        glVertex3f(0.0, 0.0, 0.0)
-        glVertex3f(2.0, 0.0, 0.0)
-        
-        # Y axis (Green)
-        glColor3f(0.0, 1.0, 0.0)
-        glVertex3f(0.0, 0.0, 0.0)
-        glVertex3f(0.0, 2.0, 0.0)
-        
-        # Z axis (Blue)
-        glColor3f(0.0, 0.0, 1.0)
-        glVertex3f(0.0, 0.0, 0.0)
-        glVertex3f(0.0, 0.0, 2.0)
-        
-        glEnd()
-        glEnable(GL_LIGHTING)
-        glLineWidth(1.0)
-        
-    def update_orientation(self, roll, pitch, yaw):
-        """Update the orientation angles and trigger repaint."""
-        self.roll = roll
-        self.pitch = pitch
-        self.yaw = yaw
-        self.update()
-
-
 class MainWindow(QMainWindow):
     """Main application window."""
     
@@ -704,6 +470,20 @@ class MainWindow(QMainWindow):
         self.imu_roll = 0.0
         self.imu_pitch = 0.0
         self.imu_yaw = 0.0
+        
+        # Smoothing for dual MPU mode (exponential moving average)
+        self.smoothing_alpha = 0.2  # Smoothing factor (0.0-1.0), lower = more smoothing
+        self.smoothed_roll = 0.0
+        self.smoothed_pitch = 0.0
+        self.smoothed_throttle = 0.0
+        self.smoothed_yaw = 0.0
+        self.first_dual_data = True  # Flag to initialize smoothed values
+        
+        # Zero/level offsets for dual MPU mode
+        self.dual_roll_offset = 0.0
+        self.dual_pitch_offset = 0.0
+        self.dual_throttle_offset = 0.0
+        self.dual_yaw_offset = 0.0
         
         # Connect signals
         self.serial_reader.data_received.connect(self.on_data_received)
@@ -820,20 +600,8 @@ class MainWindow(QMainWindow):
         data_group.setLayout(data_layout)
         main_layout.addWidget(data_group)
         
-        # Create horizontal layout for 3D viz and controls
+        # Create horizontal layout for controls
         viz_control_layout = QHBoxLayout()
-        
-        # 3D Visualization
-        viz_group = QGroupBox("3D Orientation Visualization")
-        viz_layout = QVBoxLayout()
-        
-        self.gl_widget = OpenGLWidget()
-        self.gl_widget.setMinimumHeight(300)
-        self.gl_widget.setMaximumHeight(350)
-        viz_layout.addWidget(self.gl_widget)
-        
-        viz_group.setLayout(viz_layout)
-        viz_control_layout.addWidget(viz_group, 2)
         
         # Flight control panel
         control_panel_layout = QVBoxLayout()
@@ -939,7 +707,7 @@ class MainWindow(QMainWindow):
         self.invert_layout = QHBoxLayout()
         from PySide6.QtWidgets import QCheckBox
         self.invert_roll_check = QCheckBox("Invert Roll")
-        self.invert_roll_check.setChecked(False)
+        self.invert_roll_check.setChecked(True)  # Inverted by default
         self.invert_layout.addWidget(self.invert_roll_check)
         
         self.invert_pitch_check = QCheckBox("Invert Pitch")
@@ -1196,9 +964,6 @@ class MainWindow(QMainWindow):
         self.pitch_label.setText(f"Pitch: {pitch_deg:.2f}°")
         self.yaw_label.setText(f"Yaw: {yaw_deg:.2f}°")
         
-        # Update 3D visualization with calibrated angles
-        self.gl_widget.update_orientation(roll_deg, pitch_deg, yaw_deg)
-        
         # ONLY process controls in TRANSMITTER mode
         if self.operation_mode == 'transmitter' and self.control_mode_combo.currentIndex() == 1:  # IMU Controlled
             # Get max angle setting
@@ -1325,12 +1090,21 @@ class MainWindow(QMainWindow):
         
     def zero_orientation(self):
         """Zero/level the current orientation."""
-        self.sensor_fusion.zero_orientation()
-        # Reset throttle to bottom
-        self.throttle = 0.0
-        self.throttle_gesture = 0.0
-        self.yaw_stick = 0.0
-        self.status_label.setText("Status: Orientation and throttle zeroed")
+        if self.dual_mpu_mode:
+            # In dual MPU mode, store current smoothed values as offsets
+            self.dual_roll_offset = self.smoothed_roll
+            self.dual_pitch_offset = self.smoothed_pitch
+            self.dual_throttle_offset = self.smoothed_throttle
+            self.dual_yaw_offset = self.smoothed_yaw
+            self.status_label.setText("Status: Dual MPU zero point set")
+        else:
+            # In single MPU mode, use sensor fusion zeroing
+            self.sensor_fusion.zero_orientation()
+            # Reset throttle to bottom
+            self.throttle = 0.0
+            self.throttle_gesture = 0.0
+            self.yaw_stick = 0.0
+            self.status_label.setText("Status: Orientation and throttle zeroed")
     
     def on_dual_data_received(self, dual_data):
         """Handle dual MPU6050 data in transmitter mode."""
@@ -1341,20 +1115,46 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(self.windowTitle() + " - Dual MPU")
             self.status_label.setText("Status: Connected - Dual MPU6050 Mode Active")
         
+        # Apply exponential moving average smoothing to reduce noise
+        raw_roll = dual_data['roll_stick'] / 100.0
+        raw_pitch = dual_data['pitch_stick'] / 100.0
+        raw_throttle = dual_data['throttle'] / 100.0
+        raw_yaw = dual_data['yaw_stick'] / 100.0
+        
+        # Initialize on first data point
+        if self.first_dual_data:
+            self.smoothed_roll = raw_roll
+            self.smoothed_pitch = raw_pitch
+            self.smoothed_throttle = raw_throttle
+            self.smoothed_yaw = raw_yaw
+            self.first_dual_data = False
+        else:
+            # Apply smoothing: new_value = alpha * raw + (1 - alpha) * previous
+            self.smoothed_roll = (self.smoothing_alpha * raw_roll) + ((1 - self.smoothing_alpha) * self.smoothed_roll)
+            self.smoothed_pitch = (self.smoothing_alpha * raw_pitch) + ((1 - self.smoothing_alpha) * self.smoothed_pitch)
+            self.smoothed_throttle = (self.smoothing_alpha * raw_throttle) + ((1 - self.smoothing_alpha) * self.smoothed_throttle)
+            self.smoothed_yaw = (self.smoothing_alpha * raw_yaw) + ((1 - self.smoothing_alpha) * self.smoothed_yaw)
+        
+        # Apply zero/level offsets
+        adjusted_roll = self.smoothed_roll - self.dual_roll_offset
+        adjusted_pitch = self.smoothed_pitch - self.dual_pitch_offset
+        adjusted_throttle = max(0.0, self.smoothed_throttle - self.dual_throttle_offset)  # Keep throttle >= 0
+        adjusted_yaw = self.smoothed_yaw - self.dual_yaw_offset
+        
         # Update from hardware controls with invert settings applied
         roll_multiplier = -1 if self.invert_roll_check.isChecked() else 1
         pitch_multiplier = -1 if self.invert_pitch_check.isChecked() else 1
         
-        self.roll_stick = (dual_data['roll_stick'] / 100.0) * roll_multiplier  # -100..100 to -1..1
-        self.pitch_stick = (dual_data['pitch_stick'] / 100.0) * pitch_multiplier
-        self.throttle = dual_data['throttle'] / 100.0  # 0..100 to 0..1
-        self.yaw_stick = dual_data['yaw_stick'] / 100.0
+        self.roll_stick = adjusted_roll * roll_multiplier
+        self.pitch_stick = adjusted_pitch * pitch_multiplier
+        self.throttle = adjusted_throttle
+        self.yaw_stick = adjusted_yaw
         
-        # Update control display labels
-        self.control_roll_label.setText(f"Roll: {dual_data['roll_stick']:.1f}")
-        self.control_pitch_label.setText(f"Pitch: {dual_data['pitch_stick']:.1f}")
-        self.control_throttle_label.setText(f"Throttle: {dual_data['throttle']:.1f}")
-        self.control_yaw_label.setText(f"Yaw: {dual_data['yaw_stick']:.1f}")
+        # Update control display labels (show adjusted values)
+        self.control_roll_label.setText(f"Roll: {adjusted_roll * 100.0:.1f}")
+        self.control_pitch_label.setText(f"Pitch: {adjusted_pitch * 100.0:.1f}")
+        self.control_throttle_label.setText(f"Throttle: {adjusted_throttle * 100.0:.1f}")
+        self.control_yaw_label.setText(f"Yaw: {adjusted_yaw * 100.0:.1f}")
         
         # Update joystick visualizations
         throttle_pos = (self.throttle * 2.0) - 1.0  # 0-1 to -1-1
